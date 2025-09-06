@@ -980,10 +980,9 @@ client.on('interactionCreate', async interaction => {
       try {
         console.log('🔍 معالجة مودال الاسم الكامل...');
         
-        // التحقق من أن التفاعل لم ينته صلاحيته
-        if (interaction.replied || interaction.deferred) {
-          console.log('❌ التفاعل تم الرد عليه مسبقاً');
-          return;
+        // تأجيل الرد أولاً لتجنب انتهاء صلاحية التفاعل
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.deferReply({ ephemeral: true });
         }
         
         const fullName = interaction.fields.getTextInputValue('input_full_name').trim();
@@ -992,7 +991,7 @@ client.on('interactionCreate', async interaction => {
         
         if (!fullName) {
           console.log('❌ الاسم فارغ');
-          await interaction.reply({ content: '❌ يرجى إدخال الاسم الكامل.', ephemeral: true });
+          await interaction.editReply({ content: '❌ يرجى إدخال الاسم الكامل.' });
           return;
         }
 
@@ -1014,10 +1013,9 @@ client.on('interactionCreate', async interaction => {
         const genderRow = new ActionRowBuilder().addComponents(genderSelect);
         
         console.log('✅ إرسال قائمة اختيار الجنس...');
-        await interaction.reply({ 
+        await interaction.editReply({ 
           content: `✅ تم حفظ الاسم الكامل: **${fullName}**\n\nيرجى اختيار جنسك من القائمة أدناه:`, 
-          components: [genderRow], 
-          ephemeral: true 
+          components: [genderRow]
         });
         
         console.log('✅ تم إرسال الرد بنجاح');
@@ -1032,6 +1030,10 @@ client.on('interactionCreate', async interaction => {
               content: '❌ حدث خطأ أثناء معالجة الاسم الكامل. يرجى المحاولة مرة أخرى.', 
               ephemeral: true 
             });
+          } else {
+            await interaction.editReply({ 
+              content: '❌ حدث خطأ أثناء معالجة الاسم الكامل. يرجى المحاولة مرة أخرى.'
+            });
           }
         } catch (replyError) {
           console.error('❌ فشل في إرسال رسالة الخطأ:', replyError);
@@ -1044,6 +1046,12 @@ client.on('interactionCreate', async interaction => {
     if (interaction.isStringSelectMenu() && interaction.customId === 'select_gender') {
       try {
         console.log('🔍 معالجة اختيار الجنس...');
+        
+        // تأجيل الرد أولاً لتجنب انتهاء صلاحية التفاعل
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.deferReply({ ephemeral: true });
+        }
+        
         const selectedGender = interaction.values[0];
         userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
         userSteps[interaction.user.id].gender = selectedGender;
@@ -1063,20 +1071,31 @@ client.on('interactionCreate', async interaction => {
         const cityRow = new ActionRowBuilder().addComponents(citySelect);
         
         console.log('✅ إرسال قائمة اختيار المدينة...');
-        await interaction.reply({ 
+        await interaction.editReply({ 
           content: `✅ تم حفظ الجنس: **${selectedGender === 'male' ? 'ذكر' : 'أنثى'}**\n\nيرجى اختيار مدينة الولادة من القائمة أدناه:`, 
-          components: [cityRow], 
-          ephemeral: true 
+          components: [cityRow]
         });
         
         console.log('✅ تم إرسال الرد بنجاح');
         return;
       } catch (error) {
         console.error('❌ خطأ في معالجة اختيار الجنس:', error);
-        await interaction.reply({ 
-          content: '❌ حدث خطأ أثناء معالجة اختيار الجنس. يرجى المحاولة مرة أخرى.', 
-          ephemeral: true 
-        });
+        
+        // محاولة الرد إذا لم يتم الرد مسبقاً
+        try {
+          if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ 
+              content: '❌ حدث خطأ أثناء معالجة اختيار الجنس. يرجى المحاولة مرة أخرى.', 
+              ephemeral: true 
+            });
+          } else {
+            await interaction.editReply({ 
+              content: '❌ حدث خطأ أثناء معالجة اختيار الجنس. يرجى المحاولة مرة أخرى.'
+            });
+          }
+        } catch (replyError) {
+          console.error('❌ فشل في إرسال رسالة الخطأ:', replyError);
+        }
         return;
       }
 
