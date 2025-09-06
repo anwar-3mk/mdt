@@ -1465,10 +1465,173 @@ client.on('interactionCreate', async interaction => {
           await showSingleInputModal('modal_set_military_code_review_room', 'تعيين روم قبول الأكواد العسكرية', 'input_military_code_review_room', 'اكتب ID الروم', 'مثال: 123456789012345678');
           return;
         }
+        if (selected === 'edit_delete_identity') {
+          // عرض قائمة الهويات للتعديل/الحذف
+          const page = 1;
+          const perPage = 25;
+          const guildIdentities = identities.filter(id => id.guildId === interaction.guildId);
+          const totalPages = Math.ceil(guildIdentities.length / perPage);
+          const pageIdentities = guildIdentities.slice((page-1)*perPage, page*perPage);
+          
+          if (guildIdentities.length === 0) {
+            await interaction.reply({ content: '❌ لا توجد هويات في هذا السيرفر.', ephemeral: true });
+            return;
+          }
+          
+          const options = pageIdentities.map(identity => ({
+            label: `${identity.fullName} (${identity.userId})`.slice(0, 100),
+            value: `identity_${identity.userId}`
+          }));
+          
+          if (totalPages > 1) {
+            options.push({ label: 'رؤية المزيد', value: `identity_more_${page+1}` });
+          }
+          
+          const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId(`identity_select_menu_page_${page}`)
+            .setPlaceholder('اختر هوية للتعديل أو الحذف')
+            .addOptions(options);
+          
+          const row = new ActionRowBuilder().addComponents(selectMenu);
+          const embed = new EmbedBuilder()
+            .setTitle('إدارة الهويات')
+            .setDescription('اختر هوية من القائمة أدناه لعرضها أو تعديلها أو حذفها.')
+            .setImage('https://media.discordapp.net/attachments/1388450262628176034/1396257833506443375/image.png?ex=687d6df0&is=687c1c70&hm=111158be2d0bb467417eff40ae5788bd1200cb333942e37dbe281653754dd614&=&format=webp&quality=lossless')
+            .setColor('#00ff00');
+          
+          await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+          return;
+        }
+        if (selected === 'check_military_codes') {
+          // عرض أكواد العسكر قيد المراجعة
+          const pendingCodes = pendingMilitaryCodeRequests.filter(req => req.guildId === interaction.guildId);
+          
+          if (pendingCodes.length === 0) {
+            await interaction.reply({ content: '✅ لا توجد أكواد عسكرية قيد المراجعة.', ephemeral: true });
+            return;
+          }
+          
+          const embed = new EmbedBuilder()
+            .setTitle('أكواد العسكر قيد المراجعة')
+            .setDescription(`عدد الأكواد المعلقة: ${pendingCodes.length}`)
+            .setColor('#fbbf24');
+          
+          const options = pendingCodes.slice(0, 25).map((req, idx) => ({
+            label: `${req.fullName} - ${req.code}`.slice(0, 100),
+            value: `military_code_${req.userId}`
+          }));
+          
+          const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('military_codes_menu')
+            .setPlaceholder('اختر كود للمراجعة')
+            .addOptions(options);
+          
+          const row = new ActionRowBuilder().addComponents(selectMenu);
+          await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+          return;
+        }
         // باقي الخيارات يتم التعامل معها في أماكن أخرى أو لاحقاً
       } catch (e) {
         await interaction.reply({ content: '❌ حدث خطأ أثناء فتح النافذة.', ephemeral: true });
       }
+    }
+
+    // معالجة قائمة أكواد العسكر قيد المراجعة
+    if (interaction.isStringSelectMenu() && interaction.customId === 'military_codes_menu') {
+      const userId = interaction.values[0].replace('military_code_', '');
+      const pendingRequest = pendingMilitaryCodeRequests.find(req => req.userId === userId && req.guildId === interaction.guildId);
+      
+      if (!pendingRequest) {
+        await interaction.reply({ content: '❌ لم يتم العثور على طلب الكود.', ephemeral: true });
+        return;
+      }
+      
+      const embed = new EmbedBuilder()
+        .setTitle('مراجعة كود عسكري')
+        .setDescription(`**المستخدم:** <@${pendingRequest.userId}>\n**الاسم الكامل:** ${pendingRequest.fullName}\n**الكود المطلوب:** ${pendingRequest.code}\n**تاريخ الطلب:** ${new Date(pendingRequest.timestamp).toLocaleString('ar-SA')}`)
+        .setColor('#fbbf24')
+        .setTimestamp();
+      
+      const row = new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId(`approve_military_code_${userId}`)
+            .setLabel('قبول الكود')
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId(`reject_military_code_${userId}`)
+            .setLabel('رفض الكود')
+            .setStyle(ButtonStyle.Danger)
+        );
+      
+      await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+      return;
+    }
+
+    // معالجة قبول/رفض الكود العسكري
+    if (interaction.isButton() && interaction.customId.startsWith('approve_military_code_')) {
+      const userId = interaction.customId.replace('approve_military_code_', '');
+      const requestIndex = pendingMilitaryCodeRequests.findIndex(req => req.userId === userId && req.guildId === interaction.guildId);
+      
+      if (requestIndex === -1) {
+        await interaction.reply({ content: '❌ لم يتم العثور على طلب الكود.', ephemeral: true });
+        return;
+      }
+      
+      const request = pendingMilitaryCodeRequests[requestIndex];
+      setMilitaryCode(userId, interaction.guildId, request.code);
+      pendingMilitaryCodeRequests.splice(requestIndex, 1);
+      saveAllData();
+      
+      const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
+      if (logChannelId) {
+        try {
+          const logChannel = interaction.guild.channels.cache.get(logChannelId);
+          if (logChannel) {
+            const logEmbed = new EmbedBuilder()
+              .setTitle('✅ تم قبول الكود العسكري')
+              .setDescription(`**المستخدم:** <@${userId}>\n**الاسم:** ${request.fullName}\n**الكود:** ${request.code}\n**تم القبول من قبل:** <@${interaction.user.id}>`)
+              .setColor('#00ff00')
+              .setTimestamp();
+            await logChannel.send({ embeds: [logEmbed] });
+          }
+        } catch (e) { /* تجاهل الخطأ */ }
+      }
+      
+      await interaction.reply({ content: '✅ تم قبول الكود العسكري بنجاح!', ephemeral: true });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('reject_military_code_')) {
+      const userId = interaction.customId.replace('reject_military_code_', '');
+      const requestIndex = pendingMilitaryCodeRequests.findIndex(req => req.userId === userId && req.guildId === interaction.guildId);
+      
+      if (requestIndex === -1) {
+        await interaction.reply({ content: '❌ لم يتم العثور على طلب الكود.', ephemeral: true });
+        return;
+      }
+      
+      const request = pendingMilitaryCodeRequests[requestIndex];
+      pendingMilitaryCodeRequests.splice(requestIndex, 1);
+      saveAllData();
+      
+      const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
+      if (logChannelId) {
+        try {
+          const logChannel = interaction.guild.channels.cache.get(logChannelId);
+          if (logChannel) {
+            const logEmbed = new EmbedBuilder()
+              .setTitle('❌ تم رفض الكود العسكري')
+              .setDescription(`**المستخدم:** <@${userId}>\n**الاسم:** ${request.fullName}\n**الكود:** ${request.code}\n**تم الرفض من قبل:** <@${interaction.user.id}>`)
+              .setColor('#ff0000')
+              .setTimestamp();
+            await logChannel.send({ embeds: [logEmbed] });
+          }
+        } catch (e) { /* تجاهل الخطأ */ }
+      }
+      
+      await interaction.reply({ content: '❌ تم رفض الكود العسكري.', ephemeral: true });
+      return;
     }
 
     // معالجة مودالات تعيين الإعدادات الإدارية
