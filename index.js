@@ -1146,96 +1146,223 @@ client.on('interactionCreate', async interaction => {
 
 
         if (interaction.customId === 'select_city') {
-          const selectedCity = interaction.values[0];
-          userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
-          userSteps[interaction.user.id].city = selectedCity;
-          // إنشاء خيارات السنوات من 1990 إلى 2010
-          const years = Array.from({length: 2010 - 1990 + 1}, (_, i) => 1990 + i);
-          const yearOptions = years.map(year => ({ label: year.toString(), value: year.toString() }));
-          const yearSelect = new StringSelectMenuBuilder()
-            .setCustomId('select_year')
-            .setPlaceholder('اختر سنة ميلادك')
-            .addOptions(yearOptions);
-          const yearRow = new ActionRowBuilder().addComponents(yearSelect);
-          await interaction.reply({ content: 'يرجى اختيار سنة ميلادك من القائمة أدناه:', components: [yearRow], ephemeral: true });
+          try {
+            console.log('🔍 معالجة اختيار المدينة...');
+            
+            // تأجيل الرد أولاً لتجنب انتهاء صلاحية التفاعل
+            if (!interaction.replied && !interaction.deferred) {
+              await interaction.deferReply({ ephemeral: true });
+            }
+            
+            const selectedCity = interaction.values[0];
+            userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
+            userSteps[interaction.user.id].city = selectedCity;
+            
+            console.log('💾 تم حفظ المدينة:', selectedCity);
+            console.log('👤 بيانات المستخدم:', userSteps[interaction.user.id]);
+            
+            // إنشاء خيارات السنوات من 1990 إلى 2010
+            const years = Array.from({length: 2010 - 1990 + 1}, (_, i) => 1990 + i);
+            const yearOptions = years.map(year => ({ label: year.toString(), value: year.toString() }));
+            const yearSelect = new StringSelectMenuBuilder()
+              .setCustomId('select_year')
+              .setPlaceholder('اختر سنة ميلادك')
+              .addOptions(yearOptions);
+            const yearRow = new ActionRowBuilder().addComponents(yearSelect);
+            
+            console.log('✅ إرسال قائمة اختيار السنة...');
+            await interaction.editReply({ 
+              content: `✅ تم حفظ المدينة: **${selectedCity}**\n\nيرجى اختيار سنة ميلادك من القائمة أدناه:`, 
+              components: [yearRow]
+            });
+            
+            console.log('✅ تم إرسال الرد بنجاح');
+          } catch (error) {
+            console.error('❌ خطأ في معالجة اختيار المدينة:', error);
+            
+            // محاولة الرد إذا لم يتم الرد مسبقاً
+            try {
+              if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({ 
+                  content: '❌ حدث خطأ أثناء معالجة اختيار المدينة. يرجى المحاولة مرة أخرى.', 
+                  ephemeral: true 
+                });
+              } else {
+                await interaction.editReply({ 
+                  content: '❌ حدث خطأ أثناء معالجة اختيار المدينة. يرجى المحاولة مرة أخرى.'
+                });
+              }
+            } catch (replyError) {
+              console.error('❌ فشل في إرسال رسالة الخطأ:', replyError);
+            }
+          }
         }
 
         if (interaction.customId === 'select_year') {
-          const selectedYear = interaction.values[0];
-          userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
-          userSteps[interaction.user.id].year = selectedYear;
-          // خيارات الأشهر
-          const months = [
-            { label: 'يناير', value: '1' },
-            { label: 'فبراير', value: '2' },
-            { label: 'مارس', value: '3' },
-            { label: 'أبريل', value: '4' },
-            { label: 'مايو', value: '5' },
-            { label: 'يونيو', value: '6' },
-            { label: 'يوليو', value: '7' },
-            { label: 'أغسطس', value: '8' },
-            { label: 'سبتمبر', value: '9' },
-            { label: 'أكتوبر', value: '10' },
-            { label: 'نوفمبر', value: '11' },
-            { label: 'ديسمبر', value: '12' }
-          ];
-          const monthSelect = new StringSelectMenuBuilder()
-            .setCustomId('select_month')
-            .setPlaceholder('اختر شهر ميلادك')
-            .addOptions(months);
-          const monthRow = new ActionRowBuilder().addComponents(monthSelect);
-          await interaction.reply({ content: 'يرجى اختيار شهر ميلادك من القائمة أدناه:', components: [monthRow], ephemeral: true });
+          try {
+            console.log('🔍 معالجة اختيار السنة...');
+            
+            // تأجيل الرد أولاً لتجنب انتهاء صلاحية التفاعل
+            if (!interaction.replied && !interaction.deferred) {
+              await interaction.deferReply({ ephemeral: true });
+            }
+            
+            const selectedYear = interaction.values[0];
+            userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
+            userSteps[interaction.user.id].year = selectedYear;
+            
+            console.log('💾 تم حفظ السنة:', selectedYear);
+            console.log('👤 بيانات المستخدم:', userSteps[interaction.user.id]);
+            
+            // خيارات الأشهر
+            const months = [
+              { label: 'يناير', value: '1' },
+              { label: 'فبراير', value: '2' },
+              { label: 'مارس', value: '3' },
+              { label: 'أبريل', value: '4' },
+              { label: 'مايو', value: '5' },
+              { label: 'يونيو', value: '6' },
+              { label: 'يوليو', value: '7' },
+              { label: 'أغسطس', value: '8' },
+              { label: 'سبتمبر', value: '9' },
+              { label: 'أكتوبر', value: '10' },
+              { label: 'نوفمبر', value: '11' },
+              { label: 'ديسمبر', value: '12' }
+            ];
+            const monthSelect = new StringSelectMenuBuilder()
+              .setCustomId('select_month')
+              .setPlaceholder('اختر شهر ميلادك')
+              .addOptions(months);
+            const monthRow = new ActionRowBuilder().addComponents(monthSelect);
+            
+            console.log('✅ إرسال قائمة اختيار الشهر...');
+            await interaction.editReply({ 
+              content: `✅ تم حفظ السنة: **${selectedYear}**\n\nيرجى اختيار شهر ميلادك من القائمة أدناه:`, 
+              components: [monthRow]
+            });
+            
+            console.log('✅ تم إرسال الرد بنجاح');
+          } catch (error) {
+            console.error('❌ خطأ في معالجة اختيار السنة:', error);
+            
+            // محاولة الرد إذا لم يتم الرد مسبقاً
+            try {
+              if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({ 
+                  content: '❌ حدث خطأ أثناء معالجة اختيار السنة. يرجى المحاولة مرة أخرى.', 
+                  ephemeral: true 
+                });
+              } else {
+                await interaction.editReply({ 
+                  content: '❌ حدث خطأ أثناء معالجة اختيار السنة. يرجى المحاولة مرة أخرى.'
+                });
+              }
+            } catch (replyError) {
+              console.error('❌ فشل في إرسال رسالة الخطأ:', replyError);
+            }
+          }
         }
 
         if (interaction.customId === 'select_month') {
-          const selectedMonth = interaction.values[0];
-          userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
-          userSteps[interaction.user.id].month = selectedMonth;
-          const monthNames = {
-            '1': 'يناير', '2': 'فبراير', '3': 'مارس', '4': 'أبريل', '5': 'مايو', '6': 'يونيو',
-            '7': 'يوليو', '8': 'أغسطس', '9': 'سبتمبر', '10': 'أكتوبر', '11': 'نوفمبر', '12': 'ديسمبر'
-          };
-          // قائمة منسدلة لاختيار اليوم
-          const days = Array.from({length: 24}, (_, i) => ({ label: (i+1).toString(), value: (i+1).toString() }));
-          const daySelect = new StringSelectMenuBuilder()
-            .setCustomId('select_day')
-            .setPlaceholder('اختر يوم ميلادك')
-            .addOptions(days);
-          const dayRow = new ActionRowBuilder().addComponents(daySelect);
-          await interaction.reply({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: [dayRow], ephemeral: true });
+          try {
+            console.log('🔍 معالجة اختيار الشهر...');
+            
+            // تأجيل الرد أولاً لتجنب انتهاء صلاحية التفاعل
+            if (!interaction.replied && !interaction.deferred) {
+              await interaction.deferReply({ ephemeral: true });
+            }
+            
+            const selectedMonth = interaction.values[0];
+            userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
+            userSteps[interaction.user.id].month = selectedMonth;
+            
+            console.log('💾 تم حفظ الشهر:', selectedMonth);
+            console.log('👤 بيانات المستخدم:', userSteps[interaction.user.id]);
+            
+            const monthNames = {
+              '1': 'يناير', '2': 'فبراير', '3': 'مارس', '4': 'أبريل', '5': 'مايو', '6': 'يونيو',
+              '7': 'يوليو', '8': 'أغسطس', '9': 'سبتمبر', '10': 'أكتوبر', '11': 'نوفمبر', '12': 'ديسمبر'
+            };
+            
+            // قائمة منسدلة لاختيار اليوم
+            const days = Array.from({length: 24}, (_, i) => ({ label: (i+1).toString(), value: (i+1).toString() }));
+            const daySelect = new StringSelectMenuBuilder()
+              .setCustomId('select_day')
+              .setPlaceholder('اختر يوم ميلادك')
+              .addOptions(days);
+            const dayRow = new ActionRowBuilder().addComponents(daySelect);
+            
+            console.log('✅ إرسال قائمة اختيار اليوم...');
+            await interaction.editReply({ 
+              content: `✅ تم حفظ الشهر: **${monthNames[selectedMonth]}**\n\nيرجى اختيار يوم ميلادك من القائمة أدناه:`, 
+              components: [dayRow]
+            });
+            
+            console.log('✅ تم إرسال الرد بنجاح');
+          } catch (error) {
+            console.error('❌ خطأ في معالجة اختيار الشهر:', error);
+            
+            // محاولة الرد إذا لم يتم الرد مسبقاً
+            try {
+              if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({ 
+                  content: '❌ حدث خطأ أثناء معالجة اختيار الشهر. يرجى المحاولة مرة أخرى.', 
+                  ephemeral: true 
+                });
+              } else {
+                await interaction.editReply({ 
+                  content: '❌ حدث خطأ أثناء معالجة اختيار الشهر. يرجى المحاولة مرة أخرى.'
+                });
+              }
+            } catch (replyError) {
+              console.error('❌ فشل في إرسال رسالة الخطأ:', replyError);
+            }
+          }
         }
 
         // عند استقبال اختيار اليوم (الخطوة الأخيرة)
         if (interaction.isStringSelectMenu() && interaction.customId === 'select_day') {
-          const selectedDay = interaction.values[0];
-          userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
-          userSteps[interaction.user.id].day = selectedDay;
+          try {
+            console.log('🔍 معالجة اختيار اليوم...');
+            
+            // تأجيل الرد أولاً لتجنب انتهاء صلاحية التفاعل
+            if (!interaction.replied && !interaction.deferred) {
+              await interaction.deferReply({ ephemeral: true });
+            }
+            
+            const selectedDay = interaction.values[0];
+            userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
+            userSteps[interaction.user.id].day = selectedDay;
 
-          // توليد رقم وطني عشوائي من 4 أرقام
-          const nationalId = Math.floor(1000 + Math.random() * 9000).toString();
-          userSteps[interaction.user.id].nationalId = nationalId;
+            // توليد رقم وطني عشوائي من 4 أرقام
+            const nationalId = Math.floor(1000 + Math.random() * 9000).toString();
+            userSteps[interaction.user.id].nationalId = nationalId;
 
-          // استرجاع جميع بيانات المستخدم
-          const data = userSteps[interaction.user.id];
-          const monthNames = {
-            '1': 'يناير', '2': 'فبراير', '3': 'مارس', '4': 'أبريل', '5': 'مايو', '6': 'يونيو',
-            '7': 'يوليو', '8': 'أغسطس', '9': 'سبتمبر', '10': 'أكتوبر', '11': 'نوفمبر', '12': 'ديسمبر'
-          };
-          const cityNames = {
-            'los_santos': 'لوس سانتوس',
-            'sandy_shore': 'ساندي شور',
-            'paleto': 'بوليتو'
-          };
-          const birthDate = `${data.day} / ${monthNames[data.month]} / ${data.year}`;
-          const city = cityNames[data.city] || data.city;
+            console.log('💾 تم حفظ اليوم:', selectedDay);
+            console.log('💾 تم توليد الرقم الوطني:', nationalId);
+            console.log('👤 بيانات المستخدم:', userSteps[interaction.user.id]);
 
-          // --- جلب السيرفر الصحيح ---
-          const guild = client.guilds.cache.get(interaction.guildId);
-          if (!guild) {
-            await interaction.reply({ content: '❌ لا يمكن العثور على السيرفر الأصلي لهذا الطلب.', ephemeral: true });
-            delete userSteps[interaction.user.id];
-            return;
-          }
+            // استرجاع جميع بيانات المستخدم
+            const data = userSteps[interaction.user.id];
+            const monthNames = {
+              '1': 'يناير', '2': 'فبراير', '3': 'مارس', '4': 'أبريل', '5': 'مايو', '6': 'يونيو',
+              '7': 'يوليو', '8': 'أغسطس', '9': 'سبتمبر', '10': 'أكتوبر', '11': 'نوفمبر', '12': 'ديسمبر'
+            };
+            const cityNames = {
+              'los_santos': 'لوس سانتوس',
+              'sandy_shore': 'ساندي شور',
+              'paleto': 'بوليتو'
+            };
+            const birthDate = `${data.day} / ${monthNames[data.month]} / ${data.year}`;
+            const city = cityNames[data.city] || data.city;
+
+            // --- جلب السيرفر الصحيح ---
+            const guild = client.guilds.cache.get(interaction.guildId);
+            if (!guild) {
+              await interaction.editReply({ content: '❌ لا يمكن العثور على السيرفر الأصلي لهذا الطلب.' });
+              delete userSteps[interaction.user.id];
+              return;
+            }
           // تحقق من الإعدادات
           if (!checkGuildSettings(interaction.guildId)) {
             await interaction.reply({ content: '❌ يجب تعيين جميع الإعدادات أولاً من خلال /الادارة في السيرفر.', ephemeral: true });
@@ -1411,7 +1538,27 @@ client.on('interactionCreate', async interaction => {
             delete userSteps[interaction.user.id];
           } catch (err) {
             console.error('خطأ في إنشاء البطاقة:', err);
-            await interaction.reply({ content: 'حدث خطأ أثناء إنشاء البطاقة، حاول مرة أخرى.', ephemeral: true });
+            await interaction.editReply({ content: 'حدث خطأ أثناء إنشاء البطاقة، حاول مرة أخرى.' });
+            delete userSteps[interaction.user.id];
+          }
+          } catch (error) {
+            console.error('❌ خطأ في معالجة اختيار اليوم:', error);
+            
+            // محاولة الرد إذا لم يتم الرد مسبقاً
+            try {
+              if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({ 
+                  content: '❌ حدث خطأ أثناء معالجة اختيار اليوم. يرجى المحاولة مرة أخرى.', 
+                  ephemeral: true 
+                });
+              } else {
+                await interaction.editReply({ 
+                  content: '❌ حدث خطأ أثناء معالجة اختيار اليوم. يرجى المحاولة مرة أخرى.'
+                });
+              }
+            } catch (replyError) {
+              console.error('❌ فشل في إرسال رسالة الخطأ:', replyError);
+            }
             delete userSteps[interaction.user.id];
           }
           return;
