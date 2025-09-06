@@ -672,13 +672,15 @@ client.on('interactionCreate', async interaction => {
       return s && s.logChannelId && s.reviewChannelId && s.approvalRoleId;
     }
 
-    // معالجة أمر /بطاقة
-    if (interaction.isChatInputCommand() && interaction.commandName === 'بطاقة') {
-      // تحقق من الإعدادات
-      if (!checkGuildSettings(interaction.guildId)) {
-        await interaction.reply({ content: '❌ يجب تعيين جميع الإعدادات أولاً من خلال /الادارة.', ephemeral: true });
-        return;
-      }
+    // معالجة الأوامر أولاً
+    if (interaction.isChatInputCommand()) {
+      // معالجة أمر /بطاقة
+      if (interaction.commandName === 'بطاقة') {
+        // تحقق من الإعدادات
+        if (!checkGuildSettings(interaction.guildId)) {
+          await interaction.reply({ content: '❌ يجب تعيين جميع الإعدادات أولاً من خلال /الادارة.', ephemeral: true });
+          return;
+        }
       // تحقق من روم الإنشاء
       if (!isInCreateRoom(interaction)) {
         await interaction.reply({ content: '❌ لا يمكن إنشاء الهوية إلا في روم الإنشاء المخصص.', ephemeral: true });
@@ -1814,7 +1816,7 @@ client.on('interactionCreate', async interaction => {
       }
 
       // معالجة أمر /الادارة
-      if (interaction.isChatInputCommand() && interaction.commandName === 'الادارة') {
+      if (interaction.commandName === 'الادارة') {
         // تحقق من صلاحية الأدمن (احتياط)
         if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
           await interaction.reply({ content: '❌ هذا الأمر مخصص فقط للأدمن.', ephemeral: true });
@@ -2879,8 +2881,8 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
-    // معالجة أمر /هويتي
-    if (interaction.isChatInputCommand() && interaction.commandName === 'هويتي') {
+      // معالجة أمر /هويتي
+      if (interaction.commandName === 'هويتي') {
       // تحقق من صلاحية الأدمن
       if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
         await interaction.reply({ content: '❌ هذا الأمر مخصص فقط للأدمن.', ephemeral: true });
@@ -3333,8 +3335,8 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
-    // معالجة أمر /العسكر
-    if (interaction.isChatInputCommand() && interaction.commandName === 'العسكر') {
+      // معالجة أمر /العسكر
+      if (interaction.commandName === 'العسكر') {
       // تحقق من صلاحية الأدمن
       if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
         await interaction.reply({ content: '❌ هذا الأمر مخصص فقط للأدمن.', ephemeral: true });
@@ -3366,8 +3368,8 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
-    // معالجة أمر /الشرطة
-    if (interaction.isChatInputCommand() && interaction.commandName === 'الشرطة') {
+      // معالجة أمر /الشرطة
+      if (interaction.commandName === 'الشرطة') {
       // تحقق من صلاحية الأدمن (احتياط)
       if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
         await interaction.reply({ content: '❌ هذا الأمر مخصص فقط للأدمن.', ephemeral: true });
@@ -6542,8 +6544,8 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       return;
     }
 
-    // معالجة أمر /المطور
-    if (interaction.isChatInputCommand() && interaction.commandName === 'المطور') {
+      // معالجة أمر /المطور
+      if (interaction.commandName === 'المطور') {
       // تحقق من أن المستخدم مطور مصرح له
       if (!isDeveloper(interaction.user.id)) {
         await interaction.reply({ 
@@ -8000,6 +8002,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       }
       return;
     }
+    } // نهاية معالجات الأوامر
 
     // معالج خيار إعادة تعيين الصفحة (للأوامر التي تبدأ بـ /)
     if (interaction.isStringSelectMenu() && interaction.values[0] === 'reset_page') {
