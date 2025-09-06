@@ -760,10 +760,18 @@ client.on('interactionCreate', async interaction => {
         return;
       } catch (error) {
         console.error('❌ خطأ في إظهار مودال الاسم الكامل:', error);
-        await interaction.reply({ 
-          content: '❌ حدث خطأ أثناء فتح مودال الاسم الكامل. يرجى المحاولة مرة أخرى.', 
-          ephemeral: true 
-        });
+        
+        // محاولة الرد إذا لم يتم الرد مسبقاً
+        try {
+          if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ 
+              content: '❌ حدث خطأ أثناء فتح مودال الاسم الكامل. يرجى المحاولة مرة أخرى.', 
+              ephemeral: true 
+            });
+          }
+        } catch (replyError) {
+          console.error('❌ فشل في إرسال رسالة الخطأ:', replyError);
+        }
         return;
       }
     }
@@ -971,6 +979,13 @@ client.on('interactionCreate', async interaction => {
     if (interaction.isModalSubmit() && interaction.customId === 'modal_full_name') {
       try {
         console.log('🔍 معالجة مودال الاسم الكامل...');
+        
+        // التحقق من أن التفاعل لم ينته صلاحيته
+        if (interaction.replied || interaction.deferred) {
+          console.log('❌ التفاعل تم الرد عليه مسبقاً');
+          return;
+        }
+        
         const fullName = interaction.fields.getTextInputValue('input_full_name').trim();
         
         console.log('📝 الاسم المدخل:', fullName);
@@ -1009,10 +1024,18 @@ client.on('interactionCreate', async interaction => {
         return;
       } catch (error) {
         console.error('❌ خطأ في معالجة مودال الاسم الكامل:', error);
-        await interaction.reply({ 
-          content: '❌ حدث خطأ أثناء معالجة الاسم الكامل. يرجى المحاولة مرة أخرى.', 
-          ephemeral: true 
-        });
+        
+        // محاولة الرد إذا لم يتم الرد مسبقاً
+        try {
+          if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ 
+              content: '❌ حدث خطأ أثناء معالجة الاسم الكامل. يرجى المحاولة مرة أخرى.', 
+              ephemeral: true 
+            });
+          }
+        } catch (replyError) {
+          console.error('❌ فشل في إرسال رسالة الخطأ:', replyError);
+        }
         return;
       }
     }
