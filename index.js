@@ -707,6 +707,131 @@ client.on('interactionCreate', async interaction => {
       return;
     }
     
+    // معالج مودال الاسم الكامل (يجب أن يكون أولاً)
+    if (interaction.isModalSubmit() && interaction.customId === 'modal_full_name') {
+      try {
+        console.log('🔍 معالجة مودال الاسم الكامل...');
+        
+        // تأجيل الرد أولاً لتجنب انتهاء صلاحية التفاعل
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.deferReply({ ephemeral: true });
+        }
+        
+        const fullName = interaction.fields.getTextInputValue('input_full_name').trim();
+        
+        console.log('📝 الاسم المدخل:', fullName);
+        
+        if (!fullName) {
+          console.log('❌ الاسم فارغ');
+          await interaction.editReply({ content: '❌ يرجى إدخال الاسم الكامل.' });
+          return;
+        }
+
+        // حفظ الاسم الكامل في userSteps
+        userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
+        userSteps[interaction.user.id].fullName = fullName;
+        
+        console.log('💾 تم حفظ الاسم الكامل:', fullName);
+        console.log('👤 بيانات المستخدم:', userSteps[interaction.user.id]);
+
+        // إنشاء قائمة منسدلة لاختيار الجنس
+        const genderSelect = new StringSelectMenuBuilder()
+          .setCustomId('select_gender')
+          .setPlaceholder('اختر جنسك')
+          .addOptions([
+            { label: 'ذكر', value: 'male' },
+            { label: 'أنثى', value: 'female' }
+          ]);
+        const genderRow = new ActionRowBuilder().addComponents(genderSelect);
+        
+        console.log('✅ إرسال قائمة اختيار الجنس...');
+        await interaction.editReply({ 
+          content: `✅ تم حفظ الاسم الكامل: **${fullName}**\n\nيرجى اختيار جنسك من القائمة أدناه:`, 
+          components: [genderRow]
+        });
+        
+        console.log('✅ تم إرسال الرد بنجاح');
+        return;
+      } catch (error) {
+        console.error('❌ خطأ في معالجة مودال الاسم الكامل:', error);
+        
+        // محاولة الرد إذا لم يتم الرد مسبقاً
+        try {
+          if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ 
+              content: '❌ حدث خطأ أثناء معالجة الاسم الكامل. يرجى المحاولة مرة أخرى.', 
+              ephemeral: true 
+            });
+          } else {
+            await interaction.editReply({ 
+              content: '❌ حدث خطأ أثناء معالجة الاسم الكامل. يرجى المحاولة مرة أخرى.'
+            });
+          }
+        } catch (replyError) {
+          console.error('❌ فشل في إرسال رسالة الخطأ:', replyError);
+        }
+        return;
+      }
+    }
+    
+    // معالج قائمة اختيار الجنس (يجب أن يكون أولاً)
+    if (interaction.isStringSelectMenu() && interaction.customId === 'select_gender') {
+      try {
+        console.log('🔍 معالجة اختيار الجنس...');
+        
+        // تأجيل الرد أولاً لتجنب انتهاء صلاحية التفاعل
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.deferReply({ ephemeral: true });
+        }
+        
+        const selectedGender = interaction.values[0];
+        userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
+        userSteps[interaction.user.id].gender = selectedGender;
+        
+        console.log('💾 تم حفظ الجنس:', selectedGender);
+        console.log('👤 بيانات المستخدم:', userSteps[interaction.user.id]);
+        
+        // قائمة منسدلة لاختيار مدينة الولادة
+        const citySelect = new StringSelectMenuBuilder()
+          .setCustomId('select_city')
+          .setPlaceholder('اختر مدينة الولادة')
+          .addOptions([
+            { label: 'لوس سانتوس', value: 'los_santos' },
+            { label: 'ساندي شور', value: 'sandy_shore' },
+            { label: 'بوليتو', value: 'paleto' }
+          ]);
+        const cityRow = new ActionRowBuilder().addComponents(citySelect);
+        
+        console.log('✅ إرسال قائمة اختيار المدينة...');
+        await interaction.editReply({ 
+          content: `✅ تم حفظ الجنس: **${selectedGender === 'male' ? 'ذكر' : 'أنثى'}**\n\nيرجى اختيار مدينة الولادة من القائمة أدناه:`, 
+          components: [cityRow]
+        });
+        
+        console.log('✅ تم إرسال الرد بنجاح');
+        return;
+      } catch (error) {
+        console.error('❌ خطأ في معالجة اختيار الجنس:', error);
+        
+        // محاولة الرد إذا لم يتم الرد مسبقاً
+        try {
+          if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ 
+              content: '❌ حدث خطأ أثناء معالجة اختيار الجنس. يرجى المحاولة مرة أخرى.', 
+              ephemeral: true 
+            });
+          } else {
+            await interaction.editReply({ 
+              content: '❌ حدث خطأ أثناء معالجة اختيار الجنس. يرجى المحاولة مرة أخرى.'
+            });
+          }
+        } catch (replyError) {
+          console.error('❌ فشل في إرسال رسالة الخطأ:', replyError);
+        }
+        return;
+      }
+    }
+    
     // عند الضغط على زر بدء الإنشاء في الروم
     if (interaction.isButton() && interaction.customId === 'start_id_card') {
       // تحقق من وجود طلب معلق أو هوية مقبولة
@@ -975,131 +1100,7 @@ client.on('interactionCreate', async interaction => {
       await interaction.showModal(modal);
       return;
     }
-    // معالج مودال الاسم الكامل (يجب أن يكون أولاً)
-    if (interaction.isModalSubmit() && interaction.customId === 'modal_full_name') {
-      try {
-        console.log('🔍 معالجة مودال الاسم الكامل...');
-        
-        // تأجيل الرد أولاً لتجنب انتهاء صلاحية التفاعل
-        if (!interaction.replied && !interaction.deferred) {
-          await interaction.deferReply({ ephemeral: true });
-        }
-        
-        const fullName = interaction.fields.getTextInputValue('input_full_name').trim();
-        
-        console.log('📝 الاسم المدخل:', fullName);
-        
-        if (!fullName) {
-          console.log('❌ الاسم فارغ');
-          await interaction.editReply({ content: '❌ يرجى إدخال الاسم الكامل.' });
-          return;
-        }
 
-        // حفظ الاسم الكامل في userSteps
-        userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
-        userSteps[interaction.user.id].fullName = fullName;
-        
-        console.log('💾 تم حفظ الاسم الكامل:', fullName);
-        console.log('👤 بيانات المستخدم:', userSteps[interaction.user.id]);
-
-        // إنشاء قائمة منسدلة لاختيار الجنس
-        const genderSelect = new StringSelectMenuBuilder()
-          .setCustomId('select_gender')
-          .setPlaceholder('اختر جنسك')
-          .addOptions([
-            { label: 'ذكر', value: 'male' },
-            { label: 'أنثى', value: 'female' }
-          ]);
-        const genderRow = new ActionRowBuilder().addComponents(genderSelect);
-        
-        console.log('✅ إرسال قائمة اختيار الجنس...');
-        await interaction.editReply({ 
-          content: `✅ تم حفظ الاسم الكامل: **${fullName}**\n\nيرجى اختيار جنسك من القائمة أدناه:`, 
-          components: [genderRow]
-        });
-        
-        console.log('✅ تم إرسال الرد بنجاح');
-        return;
-      } catch (error) {
-        console.error('❌ خطأ في معالجة مودال الاسم الكامل:', error);
-        
-        // محاولة الرد إذا لم يتم الرد مسبقاً
-        try {
-          if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({ 
-              content: '❌ حدث خطأ أثناء معالجة الاسم الكامل. يرجى المحاولة مرة أخرى.', 
-              ephemeral: true 
-            });
-          } else {
-            await interaction.editReply({ 
-              content: '❌ حدث خطأ أثناء معالجة الاسم الكامل. يرجى المحاولة مرة أخرى.'
-            });
-          }
-        } catch (replyError) {
-          console.error('❌ فشل في إرسال رسالة الخطأ:', replyError);
-        }
-        return;
-      }
-    }
-
-    // معالج قائمة اختيار الجنس (يجب أن يكون أولاً)
-    if (interaction.isStringSelectMenu() && interaction.customId === 'select_gender') {
-      try {
-        console.log('🔍 معالجة اختيار الجنس...');
-        
-        // تأجيل الرد أولاً لتجنب انتهاء صلاحية التفاعل
-        if (!interaction.replied && !interaction.deferred) {
-          await interaction.deferReply({ ephemeral: true });
-        }
-        
-        const selectedGender = interaction.values[0];
-        userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
-        userSteps[interaction.user.id].gender = selectedGender;
-        
-        console.log('💾 تم حفظ الجنس:', selectedGender);
-        console.log('👤 بيانات المستخدم:', userSteps[interaction.user.id]);
-        
-        // قائمة منسدلة لاختيار مدينة الولادة
-        const citySelect = new StringSelectMenuBuilder()
-          .setCustomId('select_city')
-          .setPlaceholder('اختر مدينة الولادة')
-          .addOptions([
-            { label: 'لوس سانتوس', value: 'los_santos' },
-            { label: 'ساندي شور', value: 'sandy_shore' },
-            { label: 'بوليتو', value: 'paleto' }
-          ]);
-        const cityRow = new ActionRowBuilder().addComponents(citySelect);
-        
-        console.log('✅ إرسال قائمة اختيار المدينة...');
-        await interaction.editReply({ 
-          content: `✅ تم حفظ الجنس: **${selectedGender === 'male' ? 'ذكر' : 'أنثى'}**\n\nيرجى اختيار مدينة الولادة من القائمة أدناه:`, 
-          components: [cityRow]
-        });
-        
-        console.log('✅ تم إرسال الرد بنجاح');
-        return;
-      } catch (error) {
-        console.error('❌ خطأ في معالجة اختيار الجنس:', error);
-        
-        // محاولة الرد إذا لم يتم الرد مسبقاً
-        try {
-          if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({ 
-              content: '❌ حدث خطأ أثناء معالجة اختيار الجنس. يرجى المحاولة مرة أخرى.', 
-              ephemeral: true 
-            });
-          } else {
-            await interaction.editReply({ 
-              content: '❌ حدث خطأ أثناء معالجة اختيار الجنس. يرجى المحاولة مرة أخرى.'
-            });
-          }
-        } catch (replyError) {
-          console.error('❌ فشل في إرسال رسالة الخطأ:', replyError);
-        }
-        return;
-      }
-
-    }
 
     // معالج مودال حذف دليل التحذير
     if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_remove_warning_evidence_')) {
