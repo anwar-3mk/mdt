@@ -829,10 +829,73 @@ client.on('interactionCreate', async interaction => {
       }
     }
     
-    
-    
-    
-    
+    // معالج اختيار المدينة → يعرض اختيار سنة الميلاد
+    if (interaction.isStringSelectMenu() && interaction.customId === 'select_city') {
+      try {
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.deferReply({ ephemeral: true });
+        }
+        const selectedCity = interaction.values[0];
+        userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
+        userSteps[interaction.user.id].city = selectedCity;
+
+        const years = Array.from({ length: 2010 - 1990 + 1 }, (_, i) => 1990 + i);
+        const yearOptions = years.map(y => ({ label: y.toString(), value: y.toString() }));
+        const yearSelect = new StringSelectMenuBuilder()
+          .setCustomId('select_year')
+          .setPlaceholder('اختر سنة ميلادك')
+          .addOptions(yearOptions);
+        const yearRow = new ActionRowBuilder().addComponents(yearSelect);
+        await interaction.editReply({ content: 'يرجى اختيار سنة ميلادك من القائمة أدناه:', components: [yearRow] });
+        return;
+      } catch (error) {
+        console.error('❌ خطأ في معالجة اختيار المدينة:', error);
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ content: 'حدث خطأ أثناء معالجة اختيار المدينة.', ephemeral: true });
+        }
+        return;
+      }
+    }
+
+    // معالج اختيار السنة → يعرض اختيار الشهر
+    if (interaction.isStringSelectMenu() && interaction.customId === 'select_year') {
+      const selectedYear = interaction.values[0];
+      userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
+      userSteps[interaction.user.id].year = selectedYear;
+      const months = [
+        { label: 'يناير', value: '1' }, { label: 'فبراير', value: '2' }, { label: 'مارس', value: '3' },
+        { label: 'أبريل', value: '4' }, { label: 'مايو', value: '5' }, { label: 'يونيو', value: '6' },
+        { label: 'يوليو', value: '7' }, { label: 'أغسطس', value: '8' }, { label: 'سبتمبر', value: '9' },
+        { label: 'أكتوبر', value: '10' }, { label: 'نوفمبر', value: '11' }, { label: 'ديسمبر', value: '12' }
+      ];
+      const monthSelect = new StringSelectMenuBuilder()
+        .setCustomId('select_month')
+        .setPlaceholder('اختر شهر ميلادك')
+        .addOptions(months);
+      const monthRow = new ActionRowBuilder().addComponents(monthSelect);
+      await interaction.reply({ content: 'يرجى اختيار شهر ميلادك من القائمة أدناه:', components: [monthRow], ephemeral: true });
+      return;
+    }
+
+    // معالج اختيار الشهر → يعرض اختيار اليوم
+    if (interaction.isStringSelectMenu() && interaction.customId === 'select_month') {
+      const selectedMonth = interaction.values[0];
+      userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
+      userSteps[interaction.user.id].month = selectedMonth;
+      const daysInMonth = (m => ({
+        '1': 31, '2': 29, '3': 31, '4': 30, '5': 31, '6': 30,
+        '7': 31, '8': 31, '9': 30, '10': 31, '11': 30, '12': 31
+      }[m] || 31))(selectedMonth);
+      const dayOptions = Array.from({ length: daysInMonth }, (_, i) => ({ label: String(i + 1), value: String(i + 1) }));
+      const daySelect = new StringSelectMenuBuilder()
+        .setCustomId('select_day')
+        .setPlaceholder('اختر يوم ميلادك')
+        .addOptions(dayOptions);
+      const dayRow = new ActionRowBuilder().addComponents(daySelect);
+      await interaction.reply({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: [dayRow], ephemeral: true });
+      return;
+    }
+
     // عند الضغط على زر بدء الإنشاء في الروم
     if (interaction.isButton() && interaction.customId === 'start_id_card') {
       // تحقق من وجود طلب معلق أو هوية مقبولة
