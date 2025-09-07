@@ -862,18 +862,34 @@ client.on('interactionCreate', async interaction => {
       const selectedYear = interaction.values[0];
       userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
       userSteps[interaction.user.id].year = selectedYear;
-      const months = [
+      
+      // تقسيم الأشهر إلى قائمتين (6 أشهر لكل قائمة)
+      const months1 = [
         { label: 'يناير', value: '1' }, { label: 'فبراير', value: '2' }, { label: 'مارس', value: '3' },
-        { label: 'أبريل', value: '4' }, { label: 'مايو', value: '5' }, { label: 'يونيو', value: '6' },
+        { label: 'أبريل', value: '4' }, { label: 'مايو', value: '5' }, { label: 'يونيو', value: '6' }
+      ];
+      const months2 = [
         { label: 'يوليو', value: '7' }, { label: 'أغسطس', value: '8' }, { label: 'سبتمبر', value: '9' },
         { label: 'أكتوبر', value: '10' }, { label: 'نوفمبر', value: '11' }, { label: 'ديسمبر', value: '12' }
       ];
-      const monthSelect = new StringSelectMenuBuilder()
+      
+      const monthSelect1 = new StringSelectMenuBuilder()
         .setCustomId('select_month')
-        .setPlaceholder('اختر شهر ميلادك')
-        .addOptions(months);
-      const monthRow = new ActionRowBuilder().addComponents(monthSelect);
-      await interaction.reply({ content: 'يرجى اختيار شهر ميلادك من القائمة أدناه:', components: [monthRow], ephemeral: true });
+        .setPlaceholder('اختر شهر ميلادك (يناير - يونيو)')
+        .addOptions(months1);
+      const monthSelect2 = new StringSelectMenuBuilder()
+        .setCustomId('select_month')
+        .setPlaceholder('اختر شهر ميلادك (يوليو - ديسمبر)')
+        .addOptions(months2);
+        
+      const monthRow1 = new ActionRowBuilder().addComponents(monthSelect1);
+      const monthRow2 = new ActionRowBuilder().addComponents(monthSelect2);
+      
+      await interaction.reply({ 
+        content: 'يرجى اختيار شهر ميلادك من إحدى القائمتين أدناه:', 
+        components: [monthRow1, monthRow2], 
+        ephemeral: true 
+      });
       return;
     }
 
