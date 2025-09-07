@@ -886,13 +886,23 @@ client.on('interactionCreate', async interaction => {
         '1': 31, '2': 29, '3': 31, '4': 30, '5': 31, '6': 30,
         '7': 31, '8': 31, '9': 30, '10': 31, '11': 30, '12': 31
       }[m] || 31))(selectedMonth);
-      const dayOptions = Array.from({ length: daysInMonth }, (_, i) => ({ label: String(i + 1), value: String(i + 1) }));
-      const daySelect = new StringSelectMenuBuilder()
-        .setCustomId('select_day')
-        .setPlaceholder('اختر يوم ميلادك')
-        .addOptions(dayOptions);
-      const dayRow = new ActionRowBuilder().addComponents(daySelect);
-      await interaction.reply({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: [dayRow], ephemeral: true });
+
+      // تقسيم الأيام إلى قوائم بحجم لا يتجاوز 25 خيارًا
+      const allDayOptions = Array.from({ length: daysInMonth }, (_, i) => ({ label: String(i + 1), value: String(i + 1) }));
+      const chunkSize = 25;
+      const chunks = [];
+      for (let i = 0; i < allDayOptions.length; i += chunkSize) {
+        chunks.push(allDayOptions.slice(i, i + chunkSize));
+      }
+      const rows = chunks.map((opts, idx) => {
+        const select = new StringSelectMenuBuilder()
+          .setCustomId('select_day')
+          .setPlaceholder(idx === 0 ? 'اختر يوم ميلادك (1-25)' : 'اختر يوم ميلادك (26-31)')
+          .addOptions(opts);
+        return new ActionRowBuilder().addComponents(select);
+      });
+
+      await interaction.reply({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: rows, ephemeral: true });
       return;
     }
 
