@@ -43,6 +43,9 @@ const DEVELOPER_IDS = [
   '1319791882389164072'  // المطور الرابع
 ];
 
+// --- إعدادات السيرفرات ---
+let guildSettings = {};
+
 try {
   if (fs.existsSync(DATA_FILE)) {
     const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
