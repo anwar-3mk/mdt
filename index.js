@@ -832,37 +832,27 @@ client.on('interactionCreate', async interaction => {
     // معالج اختيار المدينة → يعرض اختيار سنة الميلاد
     if (interaction.isStringSelectMenu() && interaction.customId === 'select_city') {
       try {
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.deferReply({ ephemeral: true });
+        }
         const selectedCity = interaction.values[0];
         userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
         userSteps[interaction.user.id].city = selectedCity;
 
-        // إنشاء قائمة سنوات ديناميكية وتقسيمها إلى قوائم لا تتجاوز 25 خيارًا لكل قائمة (حد ديسكورد)
-        const currentYear = new Date().getFullYear();
-        const maxYear = currentYear; // إتاحة كل السنوات حتى السنة الحالية
-        const minYear = 1970; // حد أدنى منطقي
-        const years = Array.from({ length: (maxYear - minYear + 1) }, (_, i) => minYear + i).reverse();
-
-        // ضمان عدم تجاوز 5 صفوف من المكونات كحد ديسكورد
-        const minChunks = Math.ceil(years.length / 25);
-        const chunkCount = Math.min(5, Math.max(1, minChunks));
-        const chunkSize = Math.ceil(years.length / chunkCount);
-        const yearRows = [];
-        for (let i = 0; i < years.length; i += chunkSize) {
-          const chunk = years.slice(i, i + Math.min(chunkSize, 25));
-          const yearOptions = chunk.map(y => ({ label: y.toString(), value: y.toString() }));
-          const start = chunk[chunk.length - 1];
-          const end = chunk[0];
-          const yearSelect = new StringSelectMenuBuilder()
-            .setCustomId('select_year')
-            .setPlaceholder(`اختر سنة (${start} - ${end})`)
-            .addOptions(yearOptions);
-          yearRows.push(new ActionRowBuilder().addComponents(yearSelect));
-        }
-
-        await interaction.update({ content: 'يرجى اختيار سنة ميلادك من إحدى القوائم أدناه:', components: yearRows });
+        const years = Array.from({ length: 2010 - 1990 + 1 }, (_, i) => 1990 + i);
+        const yearOptions = years.map(y => ({ label: y.toString(), value: y.toString() }));
+        const yearSelect = new StringSelectMenuBuilder()
+          .setCustomId('select_year')
+          .setPlaceholder('اختر سنة ميلادك')
+          .addOptions(yearOptions);
+        const yearRow = new ActionRowBuilder().addComponents(yearSelect);
+        await interaction.editReply({ content: 'يرجى اختيار سنة ميلادك من القائمة أدناه:', components: [yearRow] });
         return;
       } catch (error) {
         console.error('❌ خطأ في معالجة اختيار المدينة:', error);
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ content: 'حدث خطأ أثناء معالجة اختيار المدينة.', ephemeral: true });
+        }
         return;
       }
     }
@@ -872,33 +862,18 @@ client.on('interactionCreate', async interaction => {
       const selectedYear = interaction.values[0];
       userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
       userSteps[interaction.user.id].year = selectedYear;
-      
-      // تقسيم الأشهر إلى قائمتين (6 أشهر لكل قائمة)
-      const months1 = [
+      const months = [
         { label: 'يناير', value: '1' }, { label: 'فبراير', value: '2' }, { label: 'مارس', value: '3' },
-        { label: 'أبريل', value: '4' }, { label: 'مايو', value: '5' }, { label: 'يونيو', value: '6' }
-      ];
-      const months2 = [
+        { label: 'أبريل', value: '4' }, { label: 'مايو', value: '5' }, { label: 'يونيو', value: '6' },
         { label: 'يوليو', value: '7' }, { label: 'أغسطس', value: '8' }, { label: 'سبتمبر', value: '9' },
         { label: 'أكتوبر', value: '10' }, { label: 'نوفمبر', value: '11' }, { label: 'ديسمبر', value: '12' }
       ];
-      
-      const monthSelect1 = new StringSelectMenuBuilder()
+      const monthSelect = new StringSelectMenuBuilder()
         .setCustomId('select_month')
-        .setPlaceholder('اختر شهر ميلادك (يناير - يونيو)')
-        .addOptions(months1);
-      const monthSelect2 = new StringSelectMenuBuilder()
-        .setCustomId('select_month')
-        .setPlaceholder('اختر شهر ميلادك (يوليو - ديسمبر)')
-        .addOptions(months2);
-        
-      const monthRow1 = new ActionRowBuilder().addComponents(monthSelect1);
-      const monthRow2 = new ActionRowBuilder().addComponents(monthSelect2);
-      
-      await interaction.update({ 
-        content: 'يرجى اختيار شهر ميلادك من إحدى القائمتين أدناه:', 
-        components: [monthRow1, monthRow2]
-      });
+        .setPlaceholder('اختر شهر ميلادك')
+        .addOptions(months);
+      const monthRow = new ActionRowBuilder().addComponents(monthSelect);
+      await interaction.reply({ content: 'يرجى اختيار شهر ميلادك من القائمة أدناه:', components: [monthRow], ephemeral: true });
       return;
     }
 
@@ -911,23 +886,13 @@ client.on('interactionCreate', async interaction => {
         '1': 31, '2': 29, '3': 31, '4': 30, '5': 31, '6': 30,
         '7': 31, '8': 31, '9': 30, '10': 31, '11': 30, '12': 31
       }[m] || 31))(selectedMonth);
-
-      // تقسيم الأيام إلى قوائم بحجم لا يتجاوز 25 خيارًا
-      const allDayOptions = Array.from({ length: daysInMonth }, (_, i) => ({ label: String(i + 1), value: String(i + 1) }));
-      const chunkSize = 25;
-      const chunks = [];
-      for (let i = 0; i < allDayOptions.length; i += chunkSize) {
-        chunks.push(allDayOptions.slice(i, i + chunkSize));
-      }
-      const rows = chunks.map((opts, idx) => {
-        const select = new StringSelectMenuBuilder()
-          .setCustomId('select_day')
-          .setPlaceholder(idx === 0 ? 'اختر يوم ميلادك (1-25)' : 'اختر يوم ميلادك (26-31)')
-          .addOptions(opts);
-        return new ActionRowBuilder().addComponents(select);
-      });
-
-      await interaction.update({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: rows });
+      const dayOptions = Array.from({ length: daysInMonth }, (_, i) => ({ label: String(i + 1), value: String(i + 1) }));
+      const daySelect = new StringSelectMenuBuilder()
+        .setCustomId('select_day')
+        .setPlaceholder('اختر يوم ميلادك')
+        .addOptions(dayOptions);
+      const dayRow = new ActionRowBuilder().addComponents(daySelect);
+      await interaction.reply({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: [dayRow], ephemeral: true });
       return;
     }
 
