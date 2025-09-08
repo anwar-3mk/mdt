@@ -836,14 +836,27 @@ client.on('interactionCreate', async interaction => {
         userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
         userSteps[interaction.user.id].city = selectedCity;
 
-        const years = Array.from({ length: 2010 - 1990 + 1 }, (_, i) => 1990 + i);
-        const yearOptions = years.map(y => ({ label: y.toString(), value: y.toString() }));
-        const yearSelect = new StringSelectMenuBuilder()
-          .setCustomId('select_year')
-          .setPlaceholder('اختر سنة ميلادك')
-          .addOptions(yearOptions);
-        const yearRow = new ActionRowBuilder().addComponents(yearSelect);
-        await interaction.update({ content: 'يرجى اختيار سنة ميلادك من القائمة أدناه:', components: [yearRow] });
+        // إنشاء قائمة سنوات ديناميكية وتقسيمها إلى قوائم لا تتجاوز 25 خيارًا لكل قائمة (حد ديسكورد)
+        const currentYear = new Date().getFullYear();
+        const maxYear = currentYear; // إتاحة كل السنوات حتى السنة الحالية
+        const minYear = 1970; // حد أدنى منطقي
+        const years = Array.from({ length: (maxYear - minYear + 1) }, (_, i) => minYear + i).reverse();
+
+        const chunkSize = 25;
+        const yearRows = [];
+        for (let i = 0; i < years.length; i += chunkSize) {
+          const chunk = years.slice(i, i + chunkSize);
+          const yearOptions = chunk.map(y => ({ label: y.toString(), value: y.toString() }));
+          const start = chunk[chunk.length - 1];
+          const end = chunk[0];
+          const yearSelect = new StringSelectMenuBuilder()
+            .setCustomId('select_year')
+            .setPlaceholder(`اختر سنة (${start} - ${end})`)
+            .addOptions(yearOptions);
+          yearRows.push(new ActionRowBuilder().addComponents(yearSelect));
+        }
+
+        await interaction.update({ content: 'يرجى اختيار سنة ميلادك من إحدى القوائم أدناه:', components: yearRows });
         return;
       } catch (error) {
         console.error('❌ خطأ في معالجة اختيار المدينة:', error);
