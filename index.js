@@ -842,10 +842,13 @@ client.on('interactionCreate', async interaction => {
         const minYear = 1970; // حد أدنى منطقي
         const years = Array.from({ length: (maxYear - minYear + 1) }, (_, i) => minYear + i).reverse();
 
-        const chunkSize = 25;
+        // ضمان عدم تجاوز 5 صفوف من المكونات كحد ديسكورد
+        const minChunks = Math.ceil(years.length / 25);
+        const chunkCount = Math.min(5, Math.max(1, minChunks));
+        const chunkSize = Math.ceil(years.length / chunkCount);
         const yearRows = [];
         for (let i = 0; i < years.length; i += chunkSize) {
-          const chunk = years.slice(i, i + chunkSize);
+          const chunk = years.slice(i, i + Math.min(chunkSize, 25));
           const yearOptions = chunk.map(y => ({ label: y.toString(), value: y.toString() }));
           const start = chunk[chunk.length - 1];
           const end = chunk[0];
