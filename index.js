@@ -1426,7 +1426,7 @@ client.on('interactionCreate', async interaction => {
               });
             }
             
-            await interaction.reply({
+            await interaction.editReply({
               content: `✅ تم إرسال طلب إنشاء هويتك بنجاح! رقم طلبك: **${requestId}**\nسيتم مراجعة طلبك قريباً.`,
               files: [{ attachment: buffer, name: 'id_card.png' }],
               ephemeral: true
