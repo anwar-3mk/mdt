@@ -887,12 +887,18 @@ client.on('interactionCreate', async interaction => {
         '7': 31, '8': 31, '9': 30, '10': 31, '11': 30, '12': 31
       }[m] || 31))(selectedMonth);
       const dayOptions = Array.from({ length: daysInMonth }, (_, i) => ({ label: String(i + 1), value: String(i + 1) }));
-      const daySelect = new StringSelectMenuBuilder()
-        .setCustomId('select_day')
-        .setPlaceholder('اختر يوم ميلادك')
-        .addOptions(dayOptions);
-      const dayRow = new ActionRowBuilder().addComponents(daySelect);
-      await interaction.reply({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: [dayRow], ephemeral: true });
+      // Discord limits a single select menu to 25 options. Split days into multiple menus if needed.
+      const chunkSize = 25;
+      const dayRows = [];
+      for (let start = 0, idx = 0; start < dayOptions.length; start += chunkSize, idx += 1) {
+        const chunk = dayOptions.slice(start, start + chunkSize);
+        const select = new StringSelectMenuBuilder()
+          .setCustomId('select_day')
+          .setPlaceholder(idx === 0 ? 'اختر يوم ميلادك' : `المزيد (${idx + 1})`)
+          .addOptions(chunk);
+        dayRows.push(new ActionRowBuilder().addComponents(select));
+      }
+      await interaction.reply({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: dayRows, ephemeral: true });
       return;
     }
 
