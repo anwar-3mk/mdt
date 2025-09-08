@@ -1426,11 +1426,18 @@ client.on('interactionCreate', async interaction => {
               });
             }
             
+            // أرسل الرد الأساسي أولاً (بدون ملفات) لتأمين نجاح التفاعل
             await interaction.editReply({
               content: `✅ تم إرسال طلب إنشاء هويتك بنجاح! رقم طلبك: **${requestId}**\nسيتم مراجعة طلبك قريباً.`,
-              files: [{ attachment: buffer, name: 'id_card.png' }],
               ephemeral: true
             });
+            // ثم أرسل الصورة في رسالة لاحقة
+            try {
+              await interaction.followUp({
+                files: [{ attachment: buffer, name: 'id_card.png' }],
+                ephemeral: true
+              });
+            } catch (_) { /* تجاهل أي خطأ عند إرسال الصورة كمتابعة */ }
             
             // حذف بيانات المستخدم بعد الإنشاء
             delete userSteps[interaction.user.id];
