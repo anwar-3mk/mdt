@@ -893,7 +893,7 @@ client.on('interactionCreate', async interaction => {
       for (let start = 0, idx = 0; start < dayOptions.length; start += chunkSize, idx += 1) {
         const chunk = dayOptions.slice(start, start + chunkSize);
         const select = new StringSelectMenuBuilder()
-          .setCustomId('select_day')
+          .setCustomId(`select_day_${idx}`)
           .setPlaceholder(idx === 0 ? 'اختر يوم ميلادك' : `المزيد (${idx + 1})`)
           .addOptions(chunk);
         dayRows.push(new ActionRowBuilder().addComponents(select));
@@ -1218,8 +1218,8 @@ client.on('interactionCreate', async interaction => {
 
 
 
-        // معالج مكرر - سيتم حذفه
-        if (false && interaction.isStringSelectMenu() && interaction.customId === 'select_day') {
+        // معالج اختيار اليوم (يدعم عدة قوائم: select_day_0, select_day_1, ...)
+        if (interaction.isStringSelectMenu() && interaction.customId.startsWith('select_day')) {
           try {
             console.log('🔍 معالجة اختيار اليوم...');
             
