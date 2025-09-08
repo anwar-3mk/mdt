@@ -832,9 +832,6 @@ client.on('interactionCreate', async interaction => {
     // معالج اختيار المدينة → يعرض اختيار سنة الميلاد
     if (interaction.isStringSelectMenu() && interaction.customId === 'select_city') {
       try {
-        if (!interaction.replied && !interaction.deferred) {
-          await interaction.deferReply({ ephemeral: true });
-        }
         const selectedCity = interaction.values[0];
         userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
         userSteps[interaction.user.id].city = selectedCity;
@@ -846,13 +843,10 @@ client.on('interactionCreate', async interaction => {
           .setPlaceholder('اختر سنة ميلادك')
           .addOptions(yearOptions);
         const yearRow = new ActionRowBuilder().addComponents(yearSelect);
-        await interaction.editReply({ content: 'يرجى اختيار سنة ميلادك من القائمة أدناه:', components: [yearRow] });
+        await interaction.update({ content: 'يرجى اختيار سنة ميلادك من القائمة أدناه:', components: [yearRow] });
         return;
       } catch (error) {
         console.error('❌ خطأ في معالجة اختيار المدينة:', error);
-        if (!interaction.replied && !interaction.deferred) {
-          await interaction.reply({ content: 'حدث خطأ أثناء معالجة اختيار المدينة.', ephemeral: true });
-        }
         return;
       }
     }
