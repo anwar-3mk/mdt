@@ -885,10 +885,9 @@ client.on('interactionCreate', async interaction => {
       const monthRow1 = new ActionRowBuilder().addComponents(monthSelect1);
       const monthRow2 = new ActionRowBuilder().addComponents(monthSelect2);
       
-      await interaction.reply({ 
+      await interaction.update({ 
         content: 'يرجى اختيار شهر ميلادك من إحدى القائمتين أدناه:', 
-        components: [monthRow1, monthRow2], 
-        ephemeral: true 
+        components: [monthRow1, monthRow2]
       });
       return;
     }
@@ -918,7 +917,7 @@ client.on('interactionCreate', async interaction => {
         return new ActionRowBuilder().addComponents(select);
       });
 
-      await interaction.reply({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: rows, ephemeral: true });
+      await interaction.update({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: rows });
       return;
     }
 
