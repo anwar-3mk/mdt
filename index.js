@@ -492,17 +492,23 @@ function addOrUpdateMilitaryUser(userId, guildId, data) {
   return true;
 }
 
-// إضافة خادم HTTP في البداية (قبل كل شيء)
+// إضافة خادم HTTP واحد فقط (Singleton)
 const http = require('http');
-const mainServer = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('MDT Bot main server is running!');
-});
-
-const mainPort = process.env.PORT || 3000;
-mainServer.listen(mainPort, () => {
-  console.log(`🌐 Main server running on port ${mainPort}`);
-});
+let httpServerStarted = false;
+function startHttpServerOnce() {
+  if (httpServerStarted) return;
+  const port = process.env.PORT || 3000;
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('MDT Bot is running!');
+  });
+  server.listen(port, () => {
+    console.log(`🌐 Main server running on port ${port}`);
+  });
+  httpServerStarted = true;
+}
+// ابدأ الخادم مبكراً
+startHttpServerOnce();
 
 // إضافة معالجة الأخطاء
 process.on('uncaughtException', (error) => {
@@ -585,28 +591,8 @@ client.once('ready', async () => {
   console.log(`🎯 Bot ID: ${client.user.id}`);
   console.log(`📊 Bot is in ${client.guilds.cache.size} servers`);
   
-  // إضافة خادم HTTP بسيط للـ port binding
-  const http = require('http');
-  const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('MDT Bot is running!');
-  });
-  
-  const PORT = process.env.PORT || 3000;
-  server.listen(PORT, () => {
-    console.log(`🌐 Server running on port ${PORT}`);
-  });
-  
-  // إضافة خادم HTTP خارج حدث ready (للحماية)
-  const backupServer = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('MDT Bot backup server is running!');
-  });
-  
-  const backupPort = process.env.PORT || 3000;
-  backupServer.listen(backupPort, () => {
-    console.log(`🌐 Backup server running on port ${backupPort}`);
-  });
+  // تأكد من تشغيل خادم HTTP مرة واحدة فقط
+  startHttpServerOnce();
   
   // حفظ اسم البوت الأصلي إذا لم يكن محفوظاً
   if (!originalBotName) {
