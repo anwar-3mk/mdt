@@ -1233,9 +1233,9 @@ client.on('interactionCreate', async interaction => {
           try {
             console.log('🔍 معالجة اختيار اليوم...');
             
-            // تأجيل الرد أولاً لتجنب انتهاء صلاحية التفاعل
+            // تأكيد التفاعل فورًا لتجنب فشل التفاعل على رسالة القائمة
             if (!interaction.replied && !interaction.deferred) {
-              await interaction.deferReply({ ephemeral: true });
+              await interaction.deferUpdate();
             }
             
             const selectedDay = interaction.values[0];
@@ -1267,13 +1267,13 @@ client.on('interactionCreate', async interaction => {
             // --- جلب السيرفر الصحيح ---
             const guild = client.guilds.cache.get(interaction.guildId);
             if (!guild) {
-              await interaction.editReply({ content: '❌ لا يمكن العثور على السيرفر الأصلي لهذا الطلب.' });
+              await interaction.followUp({ content: '❌ لا يمكن العثور على السيرفر الأصلي لهذا الطلب.', ephemeral: true });
               delete userSteps[interaction.user.id];
               return;
             }
           // تحقق من الإعدادات
           if (!checkGuildSettings(interaction.guildId)) {
-            await interaction.editReply({ content: '❌ يجب تعيين جميع الإعدادات أولاً من خلال /الادارة في السيرفر.' });
+            await interaction.followUp({ content: '❌ يجب تعيين جميع الإعدادات أولاً من خلال /الادارة في السيرفر.', ephemeral: true });
             delete userSteps[interaction.user.id];
             return;
           }
@@ -1437,7 +1437,7 @@ client.on('interactionCreate', async interaction => {
             }
             
             // أرسل الرد الأساسي أولاً (بدون ملفات) لتأمين نجاح التفاعل
-            await interaction.editReply({
+            await interaction.followUp({
               content: `✅ تم إرسال طلب إنشاء هويتك بنجاح! رقم طلبك: **${requestId}**\nسيتم مراجعة طلبك قريباً.`,
               ephemeral: true
             });
@@ -1453,7 +1453,7 @@ client.on('interactionCreate', async interaction => {
             delete userSteps[interaction.user.id];
           } catch (err) {
             console.error('خطأ في إنشاء البطاقة:', err);
-            await interaction.editReply({ content: 'حدث خطأ أثناء إنشاء البطاقة، حاول مرة أخرى.' });
+            await interaction.followUp({ content: 'حدث خطأ أثناء إنشاء البطاقة، حاول مرة أخرى.', ephemeral: true });
             delete userSteps[interaction.user.id];
           }
           } catch (error) {
@@ -1461,16 +1461,10 @@ client.on('interactionCreate', async interaction => {
             
             // محاولة الرد إذا لم يتم الرد مسبقاً
             try {
-              if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({ 
-                  content: '❌ حدث خطأ أثناء معالجة اختيار اليوم. يرجى المحاولة مرة أخرى.', 
-                  ephemeral: true 
-                });
-              } else {
-                await interaction.editReply({ 
-                  content: '❌ حدث خطأ أثناء معالجة اختيار اليوم. يرجى المحاولة مرة أخرى.'
-                });
-              }
+              await interaction.followUp({ 
+                content: '❌ حدث خطأ أثناء معالجة اختيار اليوم. يرجى المحاولة مرة أخرى.', 
+                ephemeral: true 
+              });
             } catch (replyError) {
               console.error('❌ فشل في إرسال رسالة الخطأ:', replyError);
             }
