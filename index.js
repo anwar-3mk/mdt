@@ -1212,23 +1212,23 @@ client.on('interactionCreate', async interaction => {
           try {
             console.log('🔍 معالجة اختيار اليوم...');
 
-            // ثبّت التفاعل بتحديث مؤجل على نفس الرسالة لتفادي شعار الفشل
-            let acknowledged = false;
-            try {
-              if (!interaction.deferred && !interaction.replied) {
-                await interaction.deferUpdate();
-                acknowledged = true;
-              }
-            } catch (_) {}
-            // في حال فشل deferUpdate لأي سبب، استخدم رد مؤجل جديد
-            if (!acknowledged) {
-              try { if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ ephemeral: true }); } catch (_) {}
-            }
-
             const selectedDay = interaction.values && interaction.values[0] ? interaction.values[0] : null;
             if (!selectedDay) {
-              await interaction.followUp({ content: '❌ لم يتم اختيار يوم صالح.', ephemeral: true });
+              // لا يمكن التحديث بدون قيمة صحيحة
+              try {
+                await interaction.update({ content: '❌ لم يتم اختيار يوم صالح.', components: [] });
+              } catch (_) {
+                try { await interaction.reply({ content: '❌ لم يتم اختيار يوم صالح.', ephemeral: true }); } catch (_) {}
+              }
               return;
+            }
+
+            // حدّث رسالة القوائم فورًا لتأكيد الالتقاط وإزالة القوائم (منع فشل التفاعل)
+            try {
+              await interaction.update({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, components: [] });
+            } catch (_) {
+              // احتياط في حال فشل التحديث
+              try { await interaction.reply({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, ephemeral: true }); } catch (_) {}
             }
 
             // تحقق من توافر guild للتأكد أن التفاعل ليس في الخاص
@@ -1251,8 +1251,7 @@ client.on('interactionCreate', async interaction => {
               return;
             }
 
-            // تأكيد فوري للمستخدم بأن اليوم تم التقاطه
-            await interaction.followUp({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, ephemeral: true });
+            // تم التأكيد عبر update أعلاه؛ نكمل الآن
 
             const monthNames = {
               '1': 'يناير', '2': 'فبراير', '3': 'مارس', '4': 'أبريل', '5': 'مايو', '6': 'يونيو',
