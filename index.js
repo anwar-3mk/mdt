@@ -1226,18 +1226,18 @@ client.on('interactionCreate', async interaction => {
           try {
             console.log('🔍 معالجة اختيار اليوم...');
 
-            // تثبيت التفاعل للحفاظ على رسالة القوائم
-            try { if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate(); } catch (_) {}
+            // ثبّت التفاعل برد مؤجل مستقل لتجنّب فشل التفاعل على القوائم المؤقتة
+            try { if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ ephemeral: true }); } catch (_) {}
 
             const selectedDay = interaction.values && interaction.values[0] ? interaction.values[0] : null;
             if (!selectedDay) {
-              await interaction.followUp({ content: '❌ لم يتم اختيار يوم صالح.', ephemeral: true });
+              await interaction.editReply({ content: '❌ لم يتم اختيار يوم صالح.' });
               return;
             }
 
             // تحقق من توافر guild للتأكد أن التفاعل ليس في الخاص
             if (!interaction.guildId) {
-              await interaction.followUp({ content: '❌ يجب إكمال الخطوات داخل السيرفر.', ephemeral: true });
+              await interaction.editReply({ content: '❌ يجب إكمال الخطوات داخل السيرفر.' });
               return;
             }
 
@@ -1251,12 +1251,12 @@ client.on('interactionCreate', async interaction => {
 
             // تحقق من البيانات المطلوبة قبل المتابعة
             if (!data.fullName || !data.gender || !data.city || !data.year || !data.month) {
-              await interaction.followUp({ content: '⚠️ يرجى إكمال جميع الخطوات (الاسم، الجنس، المدينة، السنة، الشهر) قبل اختيار اليوم.', ephemeral: true });
+              await interaction.editReply({ content: '⚠️ يرجى إكمال جميع الخطوات (الاسم، الجنس، المدينة، السنة، الشهر) قبل اختيار اليوم.' });
               return;
             }
 
             // تأكيد فوري للمستخدم بأن اليوم تم التقاطه
-            await interaction.followUp({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, ephemeral: true });
+            await interaction.editReply({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...` });
 
             const monthNames = {
               '1': 'يناير', '2': 'فبراير', '3': 'مارس', '4': 'أبريل', '5': 'مايو', '6': 'يونيو',
@@ -1273,12 +1273,12 @@ client.on('interactionCreate', async interaction => {
             // --- جلب السيرفر الصحيح ---
             const guild = client.guilds.cache.get(interaction.guildId) || await client.guilds.fetch(interaction.guildId).catch(() => null);
             if (!guild) {
-              await interaction.followUp({ content: '❌ لا يمكن العثور على السيرفر الأصلي لهذا الطلب.', ephemeral: true });
+              await interaction.editReply({ content: '❌ لا يمكن العثور على السيرفر الأصلي لهذا الطلب.' });
               delete userSteps[interaction.user.id];
               return;
             }
             if (!checkGuildSettings(interaction.guildId)) {
-              await interaction.followUp({ content: '❌ يجب تعيين جميع الإعدادات أولاً من خلال /الادارة في السيرفر.', ephemeral: true });
+              await interaction.editReply({ content: '❌ يجب تعيين جميع الإعدادات أولاً من خلال /الادارة في السيرفر.' });
               delete userSteps[interaction.user.id];
               return;
             }
@@ -1397,19 +1397,19 @@ client.on('interactionCreate', async interaction => {
                 await reviewChannel.send({ embeds: [reviewEmbed], components: [row], files: [{ attachment: buffer, name: 'id_card.png' }] });
               }
 
-              await interaction.followUp({ content: `✅ تم إرسال طلب إنشاء هويتك بنجاح! رقم طلبك: **${requestId}**`, ephemeral: true });
+              await interaction.editReply({ content: `✅ تم إرسال طلب إنشاء هويتك بنجاح! رقم طلبك: **${requestId}**` });
               try { await interaction.followUp({ files: [{ attachment: buffer, name: 'id_card.png' }], ephemeral: true }); } catch (_) {}
 
               delete userSteps[interaction.user.id];
             } catch (err) {
               console.error('خطأ في إنشاء البطاقة:', err);
-              await interaction.followUp({ content: '❌ حدث خطأ أثناء إنشاء البطاقة، حاول مرة أخرى.', ephemeral: true });
+              await interaction.editReply({ content: '❌ حدث خطأ أثناء إنشاء البطاقة، حاول مرة أخرى.' });
               delete userSteps[interaction.user.id];
             }
           } catch (error) {
             console.error('❌ خطأ في معالجة اختيار اليوم:', error);
             try {
-              await interaction.followUp({ content: '❌ حدث خطأ أثناء معالجة اختيار اليوم. يرجى المحاولة مرة أخرى.', ephemeral: true });
+              await interaction.editReply({ content: '❌ حدث خطأ أثناء معالجة اختيار اليوم. يرجى المحاولة مرة أخرى.' });
             } catch (replyError) {
               console.error('❌ فشل في إرسال رسالة الخطأ:', replyError);
             }
