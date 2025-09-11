@@ -882,8 +882,7 @@ client.on('interactionCreate', async interaction => {
       const selectedMonth = interaction.values[0];
       userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
       userSteps[interaction.user.id].month = selectedMonth;
-      // تأجيل الرد ثم تعديل نفس الرسالة لتفادي فشل التفاعل
-      try { if (!interaction.replied && !interaction.deferred) await interaction.deferReply({ ephemeral: true }); } catch (_) {}
+      // لا نستخدم deferReply هنا؛ سنحدّث نفس رسالة القائمة مباشرة
       const daysInMonth = (m => ({
         '1': 31, '2': 29, '3': 31, '4': 30, '5': 31, '6': 30,
         '7': 31, '8': 31, '9': 30, '10': 31, '11': 30, '12': 31
