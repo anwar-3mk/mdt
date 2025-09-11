@@ -882,6 +882,8 @@ client.on('interactionCreate', async interaction => {
       const selectedMonth = interaction.values[0];
       userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
       userSteps[interaction.user.id].month = selectedMonth;
+      // تأجيل الرد ثم تعديل نفس الرسالة لتفادي فشل التفاعل
+      try { if (!interaction.replied && !interaction.deferred) await interaction.deferReply({ ephemeral: true }); } catch (_) {}
       const daysInMonth = (m => ({
         '1': 31, '2': 29, '3': 31, '4': 30, '5': 31, '6': 30,
         '7': 31, '8': 31, '9': 30, '10': 31, '11': 30, '12': 31
@@ -898,7 +900,15 @@ client.on('interactionCreate', async interaction => {
           .addOptions(chunk);
         dayRows.push(new ActionRowBuilder().addComponents(select));
       }
-      await interaction.reply({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: dayRows, ephemeral: true });
+      try {
+        await interaction.editReply({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: dayRows });
+      } catch (e) {
+        if (!interaction.replied) {
+          await interaction.reply({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: dayRows, ephemeral: true });
+        } else {
+          await interaction.followUp({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: dayRows, ephemeral: true });
+        }
+      }
       return;
     }
 
@@ -1263,7 +1273,7 @@ client.on('interactionCreate', async interaction => {
             }
           // تحقق من الإعدادات
           if (!checkGuildSettings(interaction.guildId)) {
-            await interaction.reply({ content: '❌ يجب تعيين جميع الإعدادات أولاً من خلال /الادارة في السيرفر.', ephemeral: true });
+            await interaction.editReply({ content: '❌ يجب تعيين جميع الإعدادات أولاً من خلال /الادارة في السيرفر.' });
             delete userSteps[interaction.user.id];
             return;
           }
