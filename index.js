@@ -1225,26 +1225,39 @@ client.on('interactionCreate', async interaction => {
         if (interaction.isStringSelectMenu() && interaction.customId.startsWith('select_day')) {
           try {
             console.log('🔍 معالجة اختيار اليوم...');
-            
-            const selectedDay = interaction.values[0];
-            // أعلِم المستخدم فورًا واعتِماد التفاعل بتحديث الرسالة
-            try {
-              await interaction.update({ content: `تم اختيار اليوم: ${selectedDay} — جارٍ المتابعة...`, components: [] });
-            } catch (_) { /* تجاهل أي خطأ في التحديث */ }
-            
+
+            // تثبيت التفاعل للحفاظ على رسالة القوائم
+            try { if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate(); } catch (_) {}
+
+            const selectedDay = interaction.values && interaction.values[0] ? interaction.values[0] : null;
+            if (!selectedDay) {
+              await interaction.followUp({ content: '❌ لم يتم اختيار يوم صالح.', ephemeral: true });
+              return;
+            }
+
+            // تحقق من توافر guild للتأكد أن التفاعل ليس في الخاص
+            if (!interaction.guildId) {
+              await interaction.followUp({ content: '❌ يجب إكمال الخطوات داخل السيرفر.', ephemeral: true });
+              return;
+            }
+
+            // حفظ اليوم والرقم الوطني المؤقت
             userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
             userSteps[interaction.user.id].day = selectedDay;
-
-            // توليد رقم وطني عشوائي من 4 أرقام
             const nationalId = Math.floor(1000 + Math.random() * 9000).toString();
             userSteps[interaction.user.id].nationalId = nationalId;
 
-            console.log('💾 تم حفظ اليوم:', selectedDay);
-            console.log('💾 تم توليد الرقم الوطني:', nationalId);
-            console.log('👤 بيانات المستخدم:', userSteps[interaction.user.id]);
-
-            // استرجاع جميع بيانات المستخدم
             const data = userSteps[interaction.user.id];
+
+            // تحقق من البيانات المطلوبة قبل المتابعة
+            if (!data.fullName || !data.gender || !data.city || !data.year || !data.month) {
+              await interaction.followUp({ content: '⚠️ يرجى إكمال جميع الخطوات (الاسم، الجنس، المدينة، السنة، الشهر) قبل اختيار اليوم.', ephemeral: true });
+              return;
+            }
+
+            // تأكيد فوري للمستخدم بأن اليوم تم التقاطه
+            await interaction.followUp({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, ephemeral: true });
+
             const monthNames = {
               '1': 'يناير', '2': 'فبراير', '3': 'مارس', '4': 'أبريل', '5': 'مايو', '6': 'يونيو',
               '7': 'يوليو', '8': 'أغسطس', '9': 'سبتمبر', '10': 'أكتوبر', '11': 'نوفمبر', '12': 'ديسمبر'
@@ -1258,206 +1271,145 @@ client.on('interactionCreate', async interaction => {
             const city = cityNames[data.city] || data.city;
 
             // --- جلب السيرفر الصحيح ---
-            const guild = client.guilds.cache.get(interaction.guildId);
+            const guild = client.guilds.cache.get(interaction.guildId) || await client.guilds.fetch(interaction.guildId).catch(() => null);
             if (!guild) {
               await interaction.followUp({ content: '❌ لا يمكن العثور على السيرفر الأصلي لهذا الطلب.', ephemeral: true });
               delete userSteps[interaction.user.id];
               return;
             }
-          // تحقق من الإعدادات
-          if (!checkGuildSettings(interaction.guildId)) {
-            await interaction.followUp({ content: '❌ يجب تعيين جميع الإعدادات أولاً من خلال /الادارة في السيرفر.', ephemeral: true });
-            delete userSteps[interaction.user.id];
-            return;
-          }
-
-          try {
-            // إنشاء بطاقة هوية جديدة من الصفر
-            const cardWidth = 600;
-            const cardHeight = 400;
-            const canvas = createCanvas(cardWidth, cardHeight);
-            const ctx = canvas.getContext('2d');
-
-            // رسم الخلفية الرئيسية (رمادي فاتح)
-            ctx.fillStyle = '#f5f5f5';
-            ctx.fillRect(0, 0, cardWidth, cardHeight);
-
-            // رسم الهيدر الأزرق
-            ctx.fillStyle = '#1e3a8a';
-            ctx.fillRect(0, 0, cardWidth, 60);
-            
-            // رسم الفوتر الأزرق
-            ctx.fillStyle = '#1e3a8a';
-            ctx.fillRect(0, cardHeight - 50, cardWidth, 50);
-
-            // عنوان البطاقة
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 24px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText('بطاقة الهوية الرسمية', cardWidth / 2, 35);
-
-            // تحميل صورة الأفاتار ووضعها في دائرة
-            const avatarURL = interaction.user.displayAvatarURL({ extension: 'png', size: 256 });
-            const avatar = await loadImage(avatarURL);
-            const avatarSize = 120;
-            const avatarX = 50;
-            const avatarY = 80;
-            
-            // رسم خلفية دائرية للصورة
-            ctx.fillStyle = '#e5e7eb';
-            ctx.beginPath();
-            ctx.arc(avatarX + avatarSize/2, avatarY + avatarSize/2, avatarSize/2 + 5, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // قص الصورة بشكل دائري
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(avatarX + avatarSize/2, avatarY + avatarSize/2, avatarSize/2, 0, Math.PI * 2, true);
-            ctx.closePath();
-            ctx.clip();
-            ctx.drawImage(avatar, avatarX, avatarY, avatarSize, avatarSize);
-            ctx.restore();
-
-            // إعداد النصوص
-            ctx.fillStyle = '#1f2937';
-            ctx.font = 'bold 16px Arial';
-            ctx.textAlign = 'right';
-            
-            // العناوين (على اليمين)
-            const labels = [
-              { text: 'الاسم الكامل', y: 100 },
-              { text: 'المدينة', y: 140 },
-              { text: 'تاريخ الميلاد', y: 180 },
-              { text: 'الجنسية', y: 220 },
-              { text: 'رقم الهوية', y: 260 }
-            ];
-            
-            labels.forEach(label => {
-              ctx.fillText(label.text, 280, label.y);
-            });
-
-            // القيم (على اليسار)
-            ctx.textAlign = 'left';
-            ctx.font = '16px Arial';
-            
-            // الاسم الكامل
-            ctx.fillText(data.fullName, 300, 100);
-            
-            // المدينة
-            ctx.fillText(city, 300, 140);
-            
-            // تاريخ الميلاد
-            const birthTextAr = `${data.day} / ${monthNames[data.month]} / ${data.year}`;
-            ctx.fillText(birthTextAr, 300, 180);
-            
-            // الجنسية
-            const genderText = data.gender === 'male' ? 'ذكر' : 'أنثى';
-            ctx.fillText(genderText, 300, 220);
-            
-            // رقم الهوية
-            ctx.fillText(nationalId, 300, 260);
-
-            // تاريخ الإصدار في الفوتر
-            ctx.fillStyle = '#ffffff';
-            ctx.font = '16px Arial';
-            ctx.textAlign = 'right';
-            ctx.fillText('تاريخ الإصدار :', cardWidth - 20, cardHeight - 20);
-            ctx.textAlign = 'left';
-            ctx.fillText(birthTextAr, 20, cardHeight - 20);
-
-            // إضافة شعار في الزاوية السفلية اليسرى
-            ctx.fillStyle = '#fbbf24';
-            ctx.beginPath();
-            ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#1e3a8a';
-            ctx.font = 'bold 14px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText('MDT', 50, cardHeight - 75);
-            // حفظ الصورة
-            const buffer = canvas.toBuffer('image/png');
-            
-            // إضافة طلب معلق بدلاً من هوية مباشرة
-            const requestId = Date.now().toString();
-            const pendingRequest = {
-              requestId: requestId,
-              guildId: interaction.guildId,
-              userId: interaction.user.id,
-              username: interaction.user.username,
-              fullName: data.fullName,
-              gender: data.gender,
-              city: data.city,
-              year: data.year,
-              month: data.month,
-              day: data.day,
-              nationalId: nationalId,
-              createdAt: new Date().toISOString(),
-              status: 'pending'
-            };
-            
-            pendingRequests.push(pendingRequest);
-            saveAllData();
-            
-            // إرسال الطلب لروم المراجعة في السيرفر الصحيح
-            const reviewChannelId = guildSettings[interaction.guildId].reviewChannelId;
-            const reviewChannel = guild.channels.cache.get(reviewChannelId);
-            
-            if (reviewChannel) {
-              const reviewEmbed = new EmbedBuilder()
-                .setTitle('طلب هوية جديد')
-                .setDescription(`**المستخدم:** ${interaction.user} (${interaction.user.username})\n**الاسم:** ${data.fullName}\n**الجنس:** ${data.gender === 'male' ? 'ذكر' : 'أنثى'}\n**المدينة:** ${city}\n**تاريخ الميلاد:** ${birthTextAr}\n**رقم الهوية:** ${nationalId}\n**رقم الطلب:** ${requestId}`)
-                .setThumbnail(interaction.user.displayAvatarURL())
-                .setColor('#ffa500') // برتقالي
-                .setTimestamp();
-
-              const acceptButton = new ButtonBuilder()
-                .setCustomId(`accept_${requestId}`)
-                .setLabel('قبول')
-                .setStyle(ButtonStyle.Success);
-
-              const rejectButton = new ButtonBuilder()
-                .setCustomId(`reject_${requestId}`)
-                .setLabel('رفض')
-                .setStyle(ButtonStyle.Danger);
-
-              const row = new ActionRowBuilder().addComponents(acceptButton, rejectButton);
-
-              await reviewChannel.send({
-                embeds: [reviewEmbed],
-                components: [row],
-                files: [{ attachment: buffer, name: 'id_card.png' }]
-              });
+            if (!checkGuildSettings(interaction.guildId)) {
+              await interaction.followUp({ content: '❌ يجب تعيين جميع الإعدادات أولاً من خلال /الادارة في السيرفر.', ephemeral: true });
+              delete userSteps[interaction.user.id];
+              return;
             }
-            
-            // أرسل الرد الأساسي أولاً (بدون ملفات) لتأمين نجاح التفاعل
-            await interaction.followUp({
-              content: `✅ تم إرسال طلب إنشاء هويتك بنجاح! رقم طلبك: **${requestId}**\nسيتم مراجعة طلبك قريباً.`,
-              ephemeral: true
-            });
-            // ثم أرسل الصورة في رسالة لاحقة
+
             try {
-              await interaction.followUp({
-                files: [{ attachment: buffer, name: 'id_card.png' }],
-                ephemeral: true
-              });
-            } catch (_) { /* تجاهل أي خطأ عند إرسال الصورة كمتابعة */ }
-            
-            // حذف بيانات المستخدم بعد الإنشاء
-            delete userSteps[interaction.user.id];
-          } catch (err) {
-            console.error('خطأ في إنشاء البطاقة:', err);
-            await interaction.followUp({ content: 'حدث خطأ أثناء إنشاء البطاقة، حاول مرة أخرى.', ephemeral: true });
-            delete userSteps[interaction.user.id];
-          }
+              // إنشاء بطاقة
+              const cardWidth = 600;
+              const cardHeight = 400;
+              const canvas = createCanvas(cardWidth, cardHeight);
+              const ctx = canvas.getContext('2d');
+
+              ctx.fillStyle = '#f5f5f5';
+              ctx.fillRect(0, 0, cardWidth, cardHeight);
+
+              ctx.fillStyle = '#1e3a8a';
+              ctx.fillRect(0, 0, cardWidth, 60);
+
+              ctx.fillStyle = '#1e3a8a';
+              ctx.fillRect(0, cardHeight - 50, cardWidth, 50);
+
+              ctx.fillStyle = '#ffffff';
+              ctx.font = 'bold 24px Arial';
+              ctx.textAlign = 'center';
+              ctx.fillText('بطاقة الهوية الرسمية', cardWidth / 2, 35);
+
+              const avatarURL = interaction.user.displayAvatarURL({ extension: 'png', size: 256 });
+              const avatar = await loadImage(avatarURL);
+              const avatarSize = 120;
+              const avatarX = 50;
+              const avatarY = 80;
+
+              ctx.fillStyle = '#e5e7eb';
+              ctx.beginPath();
+              ctx.arc(avatarX + avatarSize/2, avatarY + avatarSize/2, avatarSize/2 + 5, 0, Math.PI * 2);
+              ctx.fill();
+
+              ctx.save();
+              ctx.beginPath();
+              ctx.arc(avatarX + avatarSize/2, avatarY + avatarSize/2, avatarSize/2, 0, Math.PI * 2, true);
+              ctx.closePath();
+              ctx.clip();
+              ctx.drawImage(avatar, avatarX, avatarY, avatarSize, avatarSize);
+              ctx.restore();
+
+              ctx.fillStyle = '#1f2937';
+              ctx.font = 'bold 16px Arial';
+              ctx.textAlign = 'right';
+              const labels = [
+                { text: 'الاسم الكامل', y: 100 },
+                { text: 'المدينة', y: 140 },
+                { text: 'تاريخ الميلاد', y: 180 },
+                { text: 'الجنسية', y: 220 },
+                { text: 'رقم الهوية', y: 260 }
+              ];
+              labels.forEach(label => { ctx.fillText(label.text, 280, label.y); });
+
+              ctx.textAlign = 'left';
+              ctx.font = '16px Arial';
+              ctx.fillText(data.fullName, 300, 100);
+              ctx.fillText(city, 300, 140);
+              const birthTextAr = `${data.day} / ${monthNames[data.month]} / ${data.year}`;
+              ctx.fillText(birthTextAr, 300, 180);
+              const genderText = data.gender === 'male' ? 'ذكر' : 'أنثى';
+              ctx.fillText(genderText, 300, 220);
+              ctx.fillText(nationalId, 300, 260);
+
+              ctx.fillStyle = '#ffffff';
+              ctx.font = '16px Arial';
+              ctx.textAlign = 'right';
+              ctx.fillText('تاريخ الإصدار :', cardWidth - 20, cardHeight - 20);
+              ctx.textAlign = 'left';
+              ctx.fillText(birthTextAr, 20, cardHeight - 20);
+
+              ctx.fillStyle = '#fbbf24';
+              ctx.beginPath();
+              ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.fillStyle = '#1e3a8a';
+              ctx.font = 'bold 14px Arial';
+              ctx.textAlign = 'center';
+              ctx.fillText('MDT', 50, cardHeight - 75);
+
+              const buffer = canvas.toBuffer('image/png');
+
+              const requestId = Date.now().toString();
+              const pendingRequest = {
+                requestId: requestId,
+                guildId: interaction.guildId,
+                userId: interaction.user.id,
+                username: interaction.user.username,
+                fullName: data.fullName,
+                gender: data.gender,
+                city: data.city,
+                year: data.year,
+                month: data.month,
+                day: data.day,
+                nationalId: nationalId,
+                createdAt: new Date().toISOString(),
+                status: 'pending'
+              };
+              pendingRequests.push(pendingRequest);
+              saveAllData();
+
+              const reviewChannelId = guildSettings[interaction.guildId].reviewChannelId;
+              const reviewChannel = guild.channels.cache.get(reviewChannelId);
+              if (reviewChannel) {
+                const reviewEmbed = new EmbedBuilder()
+                  .setTitle('طلب هوية جديد')
+                  .setDescription(`**المستخدم:** ${interaction.user} (${interaction.user.username})\n**الاسم:** ${data.fullName}\n**الجنس:** ${data.gender === 'male' ? 'ذكر' : 'أنثى'}\n**المدينة:** ${city}\n**تاريخ الميلاد:** ${birthTextAr}\n**رقم الهوية:** ${nationalId}\n**رقم الطلب:** ${requestId}`)
+                  .setThumbnail(interaction.user.displayAvatarURL())
+                  .setColor('#ffa500')
+                  .setTimestamp();
+                const acceptButton = new ButtonBuilder().setCustomId(`accept_${requestId}`).setLabel('قبول').setStyle(ButtonStyle.Success);
+                const rejectButton = new ButtonBuilder().setCustomId(`reject_${requestId}`).setLabel('رفض').setStyle(ButtonStyle.Danger);
+                const row = new ActionRowBuilder().addComponents(acceptButton, rejectButton);
+                await reviewChannel.send({ embeds: [reviewEmbed], components: [row], files: [{ attachment: buffer, name: 'id_card.png' }] });
+              }
+
+              await interaction.followUp({ content: `✅ تم إرسال طلب إنشاء هويتك بنجاح! رقم طلبك: **${requestId}**`, ephemeral: true });
+              try { await interaction.followUp({ files: [{ attachment: buffer, name: 'id_card.png' }], ephemeral: true }); } catch (_) {}
+
+              delete userSteps[interaction.user.id];
+            } catch (err) {
+              console.error('خطأ في إنشاء البطاقة:', err);
+              await interaction.followUp({ content: '❌ حدث خطأ أثناء إنشاء البطاقة، حاول مرة أخرى.', ephemeral: true });
+              delete userSteps[interaction.user.id];
+            }
           } catch (error) {
             console.error('❌ خطأ في معالجة اختيار اليوم:', error);
-            
-            // محاولة الرد إذا لم يتم الرد مسبقاً
             try {
-              await interaction.followUp({ 
-                content: '❌ حدث خطأ أثناء معالجة اختيار اليوم. يرجى المحاولة مرة أخرى.', 
-                ephemeral: true 
-              });
+              await interaction.followUp({ content: '❌ حدث خطأ أثناء معالجة اختيار اليوم. يرجى المحاولة مرة أخرى.', ephemeral: true });
             } catch (replyError) {
               console.error('❌ فشل في إرسال رسالة الخطأ:', replyError);
             }
