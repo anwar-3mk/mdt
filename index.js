@@ -1225,12 +1225,12 @@ client.on('interactionCreate', async interaction => {
           try {
             console.log('🔍 معالجة اختيار اليوم...');
             
-            // تأكيد التفاعل فورًا لتجنب فشل التفاعل على رسالة القائمة
-            if (!interaction.replied && !interaction.deferred) {
-              await interaction.deferUpdate();
-            }
-            
             const selectedDay = interaction.values[0];
+            // أعلِم المستخدم فورًا واعتِماد التفاعل بتحديث الرسالة
+            try {
+              await interaction.update({ content: `تم اختيار اليوم: ${selectedDay} — جارٍ المتابعة...`, components: [] });
+            } catch (_) { /* تجاهل أي خطأ في التحديث */ }
+            
             userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
             userSteps[interaction.user.id].day = selectedDay;
 
