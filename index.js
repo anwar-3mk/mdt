@@ -900,15 +900,8 @@ client.on('interactionCreate', async interaction => {
           .addOptions(chunk);
         dayRows.push(new ActionRowBuilder().addComponents(select));
       }
-      try {
-        await interaction.editReply({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: dayRows });
-      } catch (e) {
-        if (!interaction.replied) {
-          await interaction.reply({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: dayRows, ephemeral: true });
-        } else {
-          await interaction.followUp({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: dayRows, ephemeral: true });
-        }
-      }
+      // حدّث رسالة القائمة مباشرة لعرض أيام الشهر
+      await interaction.update({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: dayRows });
       return;
     }
 
