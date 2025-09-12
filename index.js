@@ -1224,20 +1224,17 @@ client.on('interactionCreate', async interaction => {
             if (!selectedDay) {
               // لا يمكن التحديث بدون قيمة صحيحة
               try {
-                await interaction.update({ content: '❌ لم يتم اختيار يوم صالح.', components: [] });
+                if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate();
+                try { await interaction.message.edit({ content: '❌ لم يتم اختيار يوم صالح.', components: [] }); } catch (_) {}
               } catch (_) {
                 try { await interaction.reply({ content: '❌ لم يتم اختيار يوم صالح.', ephemeral: true }); } catch (_) {}
               }
               return;
             }
 
-            // حدّث رسالة القوائم فورًا لتأكيد الالتقاط وإزالة القوائم (منع فشل التفاعل)
-            try {
-              await interaction.update({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, components: [] });
-            } catch (_) {
-              // احتياط في حال فشل التحديث
-              try { await interaction.reply({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, ephemeral: true }); } catch (_) {}
-            }
+            // اعترف بالتفاعل بسرعة ثم أزل القوائم من الرسالة الأصلية
+            try { if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate(); } catch (_) {}
+            try { await interaction.message.edit({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, components: [] }); } catch (_) {}
 
             // تحقق من توافر guild للتأكد أن التفاعل ليس في الخاص
             if (!interaction.guildId) {
