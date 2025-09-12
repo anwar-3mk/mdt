@@ -873,17 +873,25 @@ client.on('interactionCreate', async interaction => {
         '1': 31, '2': 29, '3': 31, '4': 30, '5': 31, '6': 30,
         '7': 31, '8': 31, '9': 30, '10': 31, '11': 30, '12': 31
       }[m] || 31))(selectedMonth);
-      const dayOptions = Array.from({ length: daysInMonth }, (_, i) => ({ label: String(i + 1), value: String(i + 1) }));
-      // Discord limits a single select menu to 25 options. Split days into multiple menus if needed.
-      const chunkSize = 25;
+      // إنشاء قائمتين فقط: 1-24 و 25-30 (مع مراعاة حد الشهر)
       const dayRows = [];
-      for (let start = 0, idx = 0; start < dayOptions.length; start += chunkSize, idx += 1) {
-        const chunk = dayOptions.slice(start, start + chunkSize);
-        const select = new StringSelectMenuBuilder()
-          .setCustomId(`select_day_${idx}`)
-          .setPlaceholder(idx === 0 ? 'اختر يوم ميلادك' : `المزيد (${idx + 1})`)
-          .addOptions(chunk);
-        dayRows.push(new ActionRowBuilder().addComponents(select));
+      const maxDayToShow = Math.min(30, daysInMonth);
+      const firstEnd = Math.min(24, maxDayToShow);
+      if (firstEnd >= 1) {
+        const firstOptions = Array.from({ length: firstEnd }, (_, i) => ({ label: String(i + 1), value: String(i + 1) }));
+        const firstSelect = new StringSelectMenuBuilder()
+          .setCustomId('select_day_0')
+          .setPlaceholder('اختر يوم ميلادك')
+          .addOptions(firstOptions);
+        dayRows.push(new ActionRowBuilder().addComponents(firstSelect));
+      }
+      if (maxDayToShow >= 25) {
+        const secondOptions = Array.from({ length: maxDayToShow - 25 + 1 }, (_, i) => ({ label: String(25 + i), value: String(25 + i) }));
+        const secondSelect = new StringSelectMenuBuilder()
+          .setCustomId('select_day_1')
+          .setPlaceholder(`الأيام 25 - ${maxDayToShow}`)
+          .addOptions(secondOptions);
+        dayRows.push(new ActionRowBuilder().addComponents(secondSelect));
       }
       // ثبّت التفاعل ثم أرسل رسالة مؤقتة جديدة بقوائم الأيام
       try { if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate(); } catch (_) {}
