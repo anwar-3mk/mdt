@@ -521,9 +521,7 @@ process.on('unhandledRejection', (reason, promise) => {
 
 const client = new Client({
   intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.Guilds
   ]
 });
 
@@ -1232,21 +1230,9 @@ client.on('interactionCreate', async interaction => {
               return;
             }
 
-            // اعترف بالتفاعل بأكثر طريقة توافقًا
-            let acknowledged = false;
-            try {
-              // مفضل: تحديث رسالة التفاعل مباشرة
-              await interaction.update({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, components: [] });
-              acknowledged = true;
-            } catch (_) {
-              try {
-                if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate();
-                try { await interaction.message.edit({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, components: [] }); } catch (_) {}
-                acknowledged = true;
-              } catch (_) {
-                try { await interaction.reply({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, ephemeral: true }); acknowledged = true; } catch (_) {}
-              }
-            }
+            // اعترف بالتفاعل مبكرًا لتجنب فشل المهلة، ثم عدّل الرسالة
+            try { if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate(); } catch (_) {}
+            try { await interaction.message.edit({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, components: [] }); } catch (_) {}
 
             // تحقق من توافر guild للتأكد أن التفاعل ليس في الخاص
             if (!interaction.guildId) {
