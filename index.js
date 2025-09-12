@@ -1232,9 +1232,21 @@ client.on('interactionCreate', async interaction => {
               return;
             }
 
-            // اعترف بالتفاعل بسرعة ثم أزل القوائم من الرسالة الأصلية
-            try { if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate(); } catch (_) {}
-            try { await interaction.message.edit({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, components: [] }); } catch (_) {}
+            // اعترف بالتفاعل بأكثر طريقة توافقًا
+            let acknowledged = false;
+            try {
+              // مفضل: تحديث رسالة التفاعل مباشرة
+              await interaction.update({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, components: [] });
+              acknowledged = true;
+            } catch (_) {
+              try {
+                if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate();
+                try { await interaction.message.edit({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, components: [] }); } catch (_) {}
+                acknowledged = true;
+              } catch (_) {
+                try { await interaction.reply({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, ephemeral: true }); acknowledged = true; } catch (_) {}
+              }
+            }
 
             // تحقق من توافر guild للتأكد أن التفاعل ليس في الخاص
             if (!interaction.guildId) {
@@ -1305,7 +1317,8 @@ client.on('interactionCreate', async interaction => {
               ctx.fillText('بطاقة الهوية الرسمية', cardWidth / 2, 35);
 
               const avatarURL = interaction.user.displayAvatarURL({ extension: 'png', size: 256 });
-              const avatar = await loadImage(avatarURL);
+              let avatar = null;
+              try { avatar = await loadImage(avatarURL); } catch (_) { avatar = null; }
               const avatarSize = 120;
               const avatarX = 50;
               const avatarY = 80;
@@ -1315,13 +1328,15 @@ client.on('interactionCreate', async interaction => {
               ctx.arc(avatarX + avatarSize/2, avatarY + avatarSize/2, avatarSize/2 + 5, 0, Math.PI * 2);
               ctx.fill();
 
-              ctx.save();
-              ctx.beginPath();
-              ctx.arc(avatarX + avatarSize/2, avatarY + avatarSize/2, avatarSize/2, 0, Math.PI * 2, true);
-              ctx.closePath();
-              ctx.clip();
-              ctx.drawImage(avatar, avatarX, avatarY, avatarSize, avatarSize);
-              ctx.restore();
+              if (avatar) {
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(avatarX + avatarSize/2, avatarY + avatarSize/2, avatarSize/2, 0, Math.PI * 2, true);
+                ctx.closePath();
+                ctx.clip();
+                ctx.drawImage(avatar, avatarX, avatarY, avatarSize, avatarSize);
+                ctx.restore();
+              }
 
               ctx.fillStyle = '#1f2937';
               ctx.font = 'bold 16px Arial';
