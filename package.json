@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Discord bot with image generation ready for Render hosting.",
   "main": "index.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js"
@@ -13,7 +14,8 @@
   "dependencies": {
     "canvas": "^3.1.2",
     "discord.js": "^14.14.1",
-    "jimp": "^0.22.10"
+    "jimp": "^0.22.10",
+    "mongodb": "^6.19.0"
   },
   "keywords": [
     "discord",
