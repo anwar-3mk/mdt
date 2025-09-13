@@ -48,8 +48,9 @@ const DEVELOPER_IDS = [
 let guildSettings = {};
 
 // --- متغيرات MongoDB ---
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://mdt-bot-user:qouKFIxilWyMmB1w@mdtbot.xxxxx.mongodb.net/mdt-bot?retryWrites=true&w=majority';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://mdt-bot-user:qouKFIxilWyMmB1w@mdtbot.xxxxx.mongodb.net/mdt-bot?retryWrites=true&w=majority&ssl=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true';
 let db;
+let mongoClient;
 
 // تحميل البيانات من قاعدة البيانات (سيتم استدعاؤها عند بدء التشغيل)
 // سيتم استبدال هذا الكود القديم لاحقاً
@@ -58,17 +59,42 @@ let db;
 // تم تحميل guildSettings في الكود أعلاه
 
 // --- دوال MongoDB ---
-// دالة الاتصال بقاعدة البيانات
-async function connectToDatabase() {
-  if (!db) {
+// دالة الاتصال بقاعدة البيانات مع إعادة المحاولة
+async function connectToDatabase(retryCount = 0) {
+  const maxRetries = 3;
+  const retryDelay = 5000; // 5 ثواني
+  
+  if (!db || !mongoClient) {
     try {
-      const mongoClient = new MongoClient(MONGODB_URI);
+      console.log(`🔄 محاولة الاتصال بقاعدة البيانات... (المحاولة ${retryCount + 1}/${maxRetries + 1})`);
+      
+      mongoClient = new MongoClient(MONGODB_URI, {
+        serverSelectionTimeoutMS: 10000, // 10 ثواني
+        connectTimeoutMS: 10000,
+        socketTimeoutMS: 10000,
+        maxPoolSize: 10,
+        retryWrites: true,
+        retryReads: true
+      });
+      
       await mongoClient.connect();
       db = mongoClient.db('mdt-bot');
+      
+      // اختبار الاتصال
+      await db.admin().ping();
       console.log('✅ تم الاتصال بقاعدة البيانات بنجاح');
+      
     } catch (error) {
-      console.error('❌ خطأ في الاتصال بقاعدة البيانات:', error);
-      throw error;
+      console.error(`❌ خطأ في الاتصال بقاعدة البيانات (المحاولة ${retryCount + 1}):`, error.message);
+      
+      if (retryCount < maxRetries) {
+        console.log(`⏳ انتظار ${retryDelay/1000} ثانية قبل إعادة المحاولة...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        return connectToDatabase(retryCount + 1);
+      } else {
+        console.error('❌ فشل في الاتصال بقاعدة البيانات بعد جميع المحاولات');
+        throw error;
+      }
     }
   }
   return db;
@@ -114,8 +140,10 @@ async function loadAllData() {
   }
 }
 
-// دالة حفظ البيانات في قاعدة البيانات
-async function saveAllData() {
+// دالة حفظ البيانات في قاعدة البيانات مع إعادة المحاولة
+async function saveAllData(retryCount = 0) {
+  const maxRetries = 2;
+  
   try {
     const database = await connectToDatabase();
     const collection = database.collection('bot_data');
@@ -140,9 +168,37 @@ async function saveAllData() {
       },
       { upsert: true }
     );
-    console.log('✅ تم حفظ البيانات في قاعدة البيانات');
+    console.log('✅ تم حفظ البيانات في قاعدة البيانات بنجاح');
   } catch (error) {
-    console.error('❌ خطأ في حفظ البيانات:', error);
+    console.error(`❌ خطأ في حفظ البيانات (المحاولة ${retryCount + 1}):`, error.message);
+    
+    if (retryCount < maxRetries) {
+      console.log('⏳ إعادة المحاولة بعد ثانيتين...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      return saveAllData(retryCount + 1);
+    } else {
+      console.error('❌ فشل في حفظ البيانات بعد جميع المحاولات');
+      // حفظ البيانات محلياً كنسخة احتياطية
+      try {
+        fs.writeFileSync(DATA_FILE, JSON.stringify({
+          identities,
+          pendingRequests,
+          guildSettings,
+          botStatus,
+          originalBotName,
+          militaryData,
+          pendingMilitaryCodeRequests,
+          militaryActivePages,
+          militaryUsers,
+          militaryWarnings,
+          premiumServers: Array.from(premiumServers),
+          lastUpdated: new Date()
+        }, null, 2));
+        console.log('💾 تم حفظ البيانات محلياً كنسخة احتياطية');
+      } catch (backupError) {
+        console.error('❌ فشل في حفظ النسخة الاحتياطية المحلية:', backupError.message);
+      }
+    }
   }
 }
 
@@ -202,6 +258,26 @@ async function restoreFromBackup(backupId) {
     return false;
   } catch (error) {
     console.error('❌ خطأ في استرداد البيانات:', error);
+    return false;
+  }
+}
+
+// دالة مراقبة حالة الاتصال بقاعدة البيانات
+async function checkDatabaseConnection() {
+  try {
+    if (!db) {
+      console.log('🔄 اختبار الاتصال بقاعدة البيانات...');
+      await connectToDatabase();
+    }
+    
+    await db.admin().ping();
+    console.log('✅ قاعدة البيانات متصلة ومتجاوبة');
+    return true;
+  } catch (error) {
+    console.error('❌ قاعدة البيانات غير متصلة:', error.message);
+    // إعادة تعيين المتغيرات للاتصال مرة أخرى
+    db = null;
+    mongoClient = null;
     return false;
   }
 }
@@ -1055,6 +1131,15 @@ client.once('ready', async () => {
       console.error('❌ خطأ في فحص حجم قاعدة البيانات:', error);
     }
   }, 12 * 60 * 60 * 1000); // 12 ساعة
+  
+  // مراقبة حالة الاتصال بقاعدة البيانات كل 5 دقائق
+  setInterval(async () => {
+    try {
+      await checkDatabaseConnection();
+    } catch (error) {
+      console.error('❌ خطأ في مراقبة الاتصال:', error);
+    }
+  }, 5 * 60 * 1000); // 5 دقائق
   
   console.log('✅ تم إعداد النسخ الاحتياطي التلقائي والتنظيف');
   
