@@ -6,6 +6,7 @@ const path = require('path');
 const DATA_FILE = path.join(__dirname, 'data.json');
 const { createCanvas, loadImage } = require('canvas');
 const { generateMilitaryPageImage } = require('./militaryImage');
+const { MongoClient } = require('mongodb');
 
 // تحميل بيانات الهويات من الملف عند بدء التشغيل
 let identities = [];
@@ -46,38 +47,226 @@ const DEVELOPER_IDS = [
 // --- إعدادات السيرفرات ---
 let guildSettings = {};
 
-try {
-  if (fs.existsSync(DATA_FILE)) {
-    const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    identities = data.identities || [];
-    pendingRequests = data.pendingRequests || [];
-    botStatus = data.botStatus || 'online'; // تحميل حالة البوت
-    originalBotName = data.originalBotName || ''; // تحميل اسم البوت الأصلي
-    militaryData = data.militaryData || { users: {}, codes: {}, points: {} }; // تحميل بيانات العسكر
-    pendingMilitaryCodeRequests = data.pendingMilitaryCodeRequests || []; // تحميل طلبات الأكواد العسكرية المعلقة
-    militaryActivePages = data.militaryActivePages || [];
-    militaryUsers = data.militaryUsers || {};
-    militaryWarnings = data.militaryWarnings || {};
-    guildSettings = data.guildSettings || {}; // تحميل إعدادات السيرفرات
-  }
-  } catch (e) {
-  identities = [];
-  pendingRequests = [];
-  botStatus = 'online'; // الحالة الافتراضية
-  originalBotName = '';
-  militaryData = { users: {}, codes: {}, points: {} };
-  pendingMilitaryCodeRequests = [];
-  militaryActivePages = [];
-  militaryUsers = {};
-  militaryWarnings = {};
-  guildSettings = {}; // إعدادات السيرفرات الافتراضية
-}
+// --- متغيرات MongoDB ---
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://mdt-bot-user:qouKFIxilWyMmB1w@mdtbot.xxxxx.mongodb.net/mdt-bot?retryWrites=true&w=majority';
+let db;
+
+// تحميل البيانات من قاعدة البيانات (سيتم استدعاؤها عند بدء التشغيل)
+// سيتم استبدال هذا الكود القديم لاحقاً
 
 // --- إعدادات السيرفرات ---
 // تم تحميل guildSettings في الكود أعلاه
 
-// دالة حفظ موحدة لكل البيانات
-function saveAllData() {
+// --- دوال MongoDB ---
+// دالة الاتصال بقاعدة البيانات
+async function connectToDatabase() {
+  if (!db) {
+    try {
+      const mongoClient = new MongoClient(MONGODB_URI);
+      await mongoClient.connect();
+      db = mongoClient.db('mdt-bot');
+      console.log('✅ تم الاتصال بقاعدة البيانات بنجاح');
+    } catch (error) {
+      console.error('❌ خطأ في الاتصال بقاعدة البيانات:', error);
+      throw error;
+    }
+  }
+  return db;
+}
+
+// دالة تحميل البيانات من قاعدة البيانات
+async function loadAllData() {
+  try {
+    const database = await connectToDatabase();
+    const collection = database.collection('bot_data');
+    
+    const data = await collection.findOne({ _id: 'main_data' });
+    if (data) {
+      identities = data.identities || [];
+      pendingRequests = data.pendingRequests || [];
+      guildSettings = data.guildSettings || {};
+      botStatus = data.botStatus || 'online';
+      originalBotName = data.originalBotName || '';
+      militaryData = data.militaryData || { users: {}, codes: {}, points: {} };
+      pendingMilitaryCodeRequests = data.pendingMilitaryCodeRequests || [];
+      militaryActivePages = data.militaryActivePages || [];
+      militaryUsers = data.militaryUsers || {};
+      militaryWarnings = data.militaryWarnings || {};
+      premiumServers = new Set(data.premiumServers || []);
+      console.log('✅ تم تحميل البيانات من قاعدة البيانات');
+    } else {
+      console.log('ℹ️ لا توجد بيانات محفوظة، سيتم إنشاء بيانات جديدة');
+    }
+  } catch (error) {
+    console.error('❌ خطأ في تحميل البيانات:', error);
+    // في حالة الخطأ، استخدم البيانات الافتراضية
+    identities = [];
+    pendingRequests = [];
+    guildSettings = {};
+    botStatus = 'online';
+    originalBotName = '';
+    militaryData = { users: {}, codes: {}, points: {} };
+    pendingMilitaryCodeRequests = [];
+    militaryActivePages = [];
+    militaryUsers = {};
+    militaryWarnings = {};
+    premiumServers = new Set();
+  }
+}
+
+// دالة حفظ البيانات في قاعدة البيانات
+async function saveAllData() {
+  try {
+    const database = await connectToDatabase();
+    const collection = database.collection('bot_data');
+    
+    await collection.updateOne(
+      { _id: 'main_data' },
+      { 
+        $set: {
+          identities,
+          pendingRequests,
+          guildSettings,
+          botStatus,
+          originalBotName,
+          militaryData,
+          pendingMilitaryCodeRequests,
+          militaryActivePages,
+          militaryUsers,
+          militaryWarnings,
+          premiumServers: Array.from(premiumServers),
+          lastUpdated: new Date()
+        }
+      },
+      { upsert: true }
+    );
+    console.log('✅ تم حفظ البيانات في قاعدة البيانات');
+  } catch (error) {
+    console.error('❌ خطأ في حفظ البيانات:', error);
+  }
+}
+
+// دالة النسخ الاحتياطي
+async function createBackup() {
+  try {
+    const database = await connectToDatabase();
+    const collection = database.collection('bot_data');
+    
+    const data = await collection.findOne({ _id: 'main_data' });
+    if (data) {
+      // إنشاء نسخة احتياطية مع timestamp
+      const backupData = {
+        ...data,
+        _id: `backup_${Date.now()}`,
+        backupDate: new Date(),
+        backupType: 'manual'
+      };
+      
+      await collection.insertOne(backupData);
+      console.log('✅ تم إنشاء نسخة احتياطية');
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('❌ خطأ في إنشاء النسخ الاحتياطي:', error);
+    return false;
+  }
+}
+
+// دالة استرداد البيانات من النسخة الاحتياطية
+async function restoreFromBackup(backupId) {
+  try {
+    const database = await connectToDatabase();
+    const collection = database.collection('bot_data');
+    
+    const backup = await collection.findOne({ _id: backupId });
+    if (backup) {
+      // استرداد البيانات
+      identities = backup.identities || [];
+      pendingRequests = backup.pendingRequests || [];
+      guildSettings = backup.guildSettings || {};
+      botStatus = backup.botStatus || 'online';
+      originalBotName = backup.originalBotName || '';
+      militaryData = backup.militaryData || { users: {}, codes: {}, points: {} };
+      pendingMilitaryCodeRequests = backup.pendingMilitaryCodeRequests || [];
+      militaryActivePages = backup.militaryActivePages || [];
+      militaryUsers = backup.militaryUsers || {};
+      militaryWarnings = backup.militaryWarnings || {};
+      premiumServers = new Set(backup.premiumServers || []);
+      
+      // حفظ البيانات المستردة
+      await saveAllData();
+      console.log('✅ تم استرداد البيانات من النسخة الاحتياطية');
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('❌ خطأ في استرداد البيانات:', error);
+    return false;
+  }
+}
+
+// دالة مراقبة حجم قاعدة البيانات
+async function checkDatabaseSize() {
+  try {
+    const database = await connectToDatabase();
+    const stats = await database.stats();
+    const sizeInMB = stats.dataSize / 1024 / 1024;
+    const maxSize = 512; // 512 MB
+    
+    console.log(`📊 حجم قاعدة البيانات: ${sizeInMB.toFixed(2)} MB / ${maxSize} MB`);
+    
+    if (sizeInMB > maxSize * 0.8) {
+      console.log('⚠️ تحذير: قاعدة البيانات قاربت على الامتلاء!');
+    }
+    
+    return { sizeInMB, maxSize, percentage: (sizeInMB / maxSize) * 100 };
+  } catch (error) {
+    console.error('❌ خطأ في فحص حجم قاعدة البيانات:', error);
+    return null;
+  }
+}
+
+// دالة تنظيف البيانات القديمة
+async function cleanupOldData() {
+  try {
+    const database = await connectToDatabase();
+    const collection = database.collection('bot_data');
+    
+    // حذف الطلبات المعلقة القديمة (أكثر من 30 يوم)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    
+    // حذف الطلبات المعلقة القديمة
+    const oldRequests = pendingRequests.filter(req => 
+      new Date(req.createdAt) < thirtyDaysAgo
+    );
+    
+    if (oldRequests.length > 0) {
+      pendingRequests = pendingRequests.filter(req => 
+        new Date(req.createdAt) >= thirtyDaysAgo
+      );
+      await saveAllData();
+      console.log(`🧹 تم حذف ${oldRequests.length} طلب معلق قديم`);
+    }
+    
+    // حذف النسخ الاحتياطية القديمة (أكثر من 7 أيام)
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const result = await collection.deleteMany({
+      _id: { $regex: /^backup_/ },
+      backupDate: { $lt: sevenDaysAgo }
+    });
+    
+    if (result.deletedCount > 0) {
+      console.log(`🧹 تم حذف ${result.deletedCount} نسخة احتياطية قديمة`);
+    }
+    
+  } catch (error) {
+    console.error('❌ خطأ في تنظيف البيانات:', error);
+  }
+}
+
+// دالة حفظ موحدة لكل البيانات (Legacy - للتوافق مع الكود القديم)
+function saveAllDataLegacy() {
   fs.writeFileSync(DATA_FILE, JSON.stringify({
     identities,
     pendingRequests,
@@ -122,7 +311,13 @@ identities.forEach(identity => {
     });
   }
 });
-if (updated) saveAllData();
+if (updated) {
+  try {
+    await saveAllData();
+  } catch (error) {
+    console.error('❌ خطأ في حفظ البيانات:', error);
+  }
+}
 
 function saveGuildSettings() {
   // دمج مع بيانات الهويات والطلبات
@@ -131,11 +326,193 @@ function saveGuildSettings() {
     data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
   }
   data.guildSettings = guildSettings;
+  data.premiumServers = Array.from(premiumServers);
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
 }
 
 // متغير لتخزين خطوات المستخدم
 let userSteps = {};
+
+// متغير لتخزين السيرفرات المميزة
+let premiumServers = new Set();
+
+// دالة لإنشاء رقم هوية فريد
+function generateNationalId() {
+  return Math.floor(1000 + Math.random() * 9000).toString();
+}
+
+// دالة للتحقق من إعدادات السيرفر
+function checkGuildSettings(guildId) {
+  const s = guildSettings[guildId];
+  return s && s.logChannelId && s.reviewChannelId && s.approvalRoleId;
+}
+
+// دالة لمعالجة طلب الهوية
+async function processIdentityRequest(interaction, data) {
+  try {
+    // تحقق من البيانات المطلوبة
+    if (!data.fullName || !data.gender || !data.city || !data.year || !data.month || !data.day) {
+      await interaction.followUp({ content: '⚠️ يرجى إكمال جميع الخطوات المطلوبة.', ephemeral: true });
+      return;
+    }
+
+    // جلب السيرفر الصحيح
+    const guild = client.guilds.cache.get(interaction.guildId) || await client.guilds.fetch(interaction.guildId).catch(() => null);
+    if (!guild) {
+      await interaction.followUp({ content: '❌ لا يمكن العثور على السيرفر الأصلي لهذا الطلب.', ephemeral: true });
+      delete userSteps[interaction.user.id];
+      return;
+    }
+    if (!checkGuildSettings(interaction.guildId)) {
+      await interaction.followUp({ content: '❌ يجب تعيين جميع الإعدادات أولاً من خلال /الادارة في السيرفر.', ephemeral: true });
+      delete userSteps[interaction.user.id];
+      return;
+    }
+
+    // إنشاء رقم الهوية
+    const nationalId = generateNationalId();
+
+    // إنشاء بطاقة الهوية
+    const cardWidth = 600;
+    const cardHeight = 400;
+    const canvas = createCanvas(cardWidth, cardHeight);
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = '#f5f5f5';
+    ctx.fillRect(0, 0, cardWidth, cardHeight);
+
+    ctx.fillStyle = '#1e3a8a';
+    ctx.fillRect(0, 0, cardWidth, 60);
+
+    ctx.fillStyle = '#1e3a8a';
+    ctx.fillRect(0, cardHeight - 50, cardWidth, 50);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 24px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('بطاقة الهوية الرسمية', cardWidth / 2, 35);
+
+    const avatarURL = interaction.user.displayAvatarURL({ extension: 'png', size: 256 });
+    let avatar = null;
+    try { avatar = await loadImage(avatarURL); } catch (_) { avatar = null; }
+    const avatarSize = 120;
+    const avatarX = 50;
+    const avatarY = 80;
+
+    ctx.fillStyle = '#e5e7eb';
+    ctx.beginPath();
+    ctx.arc(avatarX + avatarSize/2, avatarY + avatarSize/2, avatarSize/2 + 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (avatar) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(avatarX + avatarSize/2, avatarY + avatarSize/2, avatarSize/2, 0, Math.PI * 2, true);
+      ctx.closePath();
+      ctx.clip();
+      ctx.drawImage(avatar, avatarX, avatarY, avatarSize, avatarSize);
+      ctx.restore();
+    }
+
+    const monthNames = {
+      '1': 'يناير', '2': 'فبراير', '3': 'مارس', '4': 'أبريل', '5': 'مايو', '6': 'يونيو',
+      '7': 'يوليو', '8': 'أغسطس', '9': 'سبتمبر', '10': 'أكتوبر', '11': 'نوفمبر', '12': 'ديسمبر'
+    };
+    const cityNames = {
+      'los_santos': 'لوس سانتوس',
+      'sandy_shore': 'ساندي شور',
+      'paleto': 'بوليتو'
+    };
+
+    ctx.fillStyle = '#1f2937';
+    ctx.font = 'bold 16px Arial';
+    ctx.textAlign = 'right';
+    const labels = [
+      { text: 'الاسم الكامل', y: 100 },
+      { text: 'المدينة', y: 140 },
+      { text: 'تاريخ الميلاد', y: 180 },
+      { text: 'الجنسية', y: 220 },
+      { text: 'رقم الهوية', y: 260 }
+    ];
+    labels.forEach(label => { ctx.fillText(label.text, 280, label.y); });
+
+    ctx.textAlign = 'left';
+    ctx.font = '16px Arial';
+    ctx.fillText(data.fullName, 300, 100);
+    const city = cityNames[data.city] || data.city;
+    ctx.fillText(city, 300, 140);
+    const birthTextAr = `${data.day} / ${monthNames[data.month]} / ${data.year}`;
+    ctx.fillText(birthTextAr, 300, 180);
+    const genderText = data.gender === 'male' ? 'ذكر' : 'أنثى';
+    ctx.fillText(genderText, 300, 220);
+    ctx.fillText(nationalId, 300, 260);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '16px Arial';
+    ctx.textAlign = 'right';
+    ctx.fillText('تاريخ الإصدار :', cardWidth - 20, cardHeight - 20);
+    ctx.textAlign = 'left';
+    ctx.fillText(birthTextAr, 20, cardHeight - 20);
+
+    ctx.fillStyle = '#fbbf24';
+    ctx.beginPath();
+    ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#1e3a8a';
+    ctx.font = 'bold 14px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('MDT', 50, cardHeight - 75);
+
+    const buffer = canvas.toBuffer('image/png');
+
+    // إنشاء الطلب
+    const requestId = Date.now().toString();
+    const pendingRequest = {
+      requestId: requestId,
+      guildId: interaction.guildId,
+      userId: interaction.user.id,
+      username: interaction.user.username,
+      fullName: data.fullName,
+      gender: data.gender,
+      city: data.city,
+      year: data.year,
+      month: data.month,
+      day: data.day,
+      nationalId: nationalId,
+      createdAt: new Date().toISOString(),
+      status: 'pending'
+    };
+    pendingRequests.push(pendingRequest);
+    await saveAllData();
+
+    // إرسال الطلب إلى قناة المراجعة
+    const reviewChannelId = guildSettings[interaction.guildId].reviewChannelId;
+    const reviewChannel = guild.channels.cache.get(reviewChannelId);
+    if (reviewChannel) {
+      const reviewEmbed = new EmbedBuilder()
+        .setTitle('طلب هوية جديد')
+        .setDescription(`**المستخدم:** ${interaction.user} (${interaction.user.username})\n**الاسم:** ${data.fullName}\n**الجنس:** ${data.gender === 'male' ? 'ذكر' : 'أنثى'}\n**المدينة:** ${city}\n**تاريخ الميلاد:** ${birthTextAr}\n**رقم الهوية:** ${nationalId}\n**رقم الطلب:** ${requestId}`)
+        .setThumbnail(interaction.user.displayAvatarURL())
+        .setColor('#ffa500')
+        .setTimestamp();
+      const acceptButton = new ButtonBuilder().setCustomId(`accept_${requestId}`).setLabel('قبول').setStyle(ButtonStyle.Success);
+      const rejectButton = new ButtonBuilder().setCustomId(`reject_${requestId}`).setLabel('رفض').setStyle(ButtonStyle.Danger);
+      const row = new ActionRowBuilder().addComponents(acceptButton, rejectButton);
+      await reviewChannel.send({ embeds: [reviewEmbed], components: [row], files: [{ attachment: buffer, name: 'id_card.png' }] });
+    }
+
+    await interaction.followUp({ content: `✅ تم إرسال طلب إنشاء هويتك بنجاح! رقم طلبك: **${requestId}**`, ephemeral: true });
+    try { await interaction.followUp({ files: [{ attachment: buffer, name: 'id_card.png' }], ephemeral: true }); } catch (_) {}
+
+    // مسح بيانات المستخدم
+    delete userSteps[interaction.user.id];
+
+  } catch (err) {
+    console.error('خطأ في إنشاء البطاقة:', err);
+    await interaction.followUp({ content: '❌ حدث خطأ أثناء إنشاء البطاقة، حاول مرة أخرى.', ephemeral: true });
+    delete userSteps[interaction.user.id];
+  }
+}
 
 // دالة للتحقق من وجود طلب معلق
 function hasPendingRequest(userId, guildId) {
@@ -194,7 +571,7 @@ async function toggleBotStatus() {
   }
   
   botStatus = newStatus;
-  saveAllData(); // حفظ الحالة في الملف
+  await saveAllData(); // حفظ الحالة في الملف
   return botStatus;
 }
 
@@ -221,24 +598,24 @@ function getMilitaryPoints(userId, guildId) {
   return militaryData.points[guildId]?.[userId] || 0;
 }
 
-function addMilitaryPoints(userId, guildId, points) {
+async function addMilitaryPoints(userId, guildId, points) {
   if (!militaryData.points[guildId]) militaryData.points[guildId] = {};
   if (!militaryData.points[guildId][userId]) militaryData.points[guildId][userId] = 0;
   militaryData.points[guildId][userId] += points;
-  saveAllData();
+  await saveAllData();
 }
 
-function removeMilitaryPoints(userId, guildId, points) {
+async function removeMilitaryPoints(userId, guildId, points) {
   if (!militaryData.points[guildId]) militaryData.points[guildId] = {};
   if (!militaryData.points[guildId][userId]) militaryData.points[guildId][userId] = 0;
   militaryData.points[guildId][userId] = Math.max(0, militaryData.points[guildId][userId] - points);
-  saveAllData();
+  await saveAllData();
 }
 
-function setMilitaryPoints(userId, guildId, points) {
+async function setMilitaryPoints(userId, guildId, points) {
   if (!militaryData.points[guildId]) militaryData.points[guildId] = {};
   militaryData.points[guildId][userId] = Math.max(0, points);
-  saveAllData();
+  await saveAllData();
 }
 
 function getAllMilitaryPoints(guildId) {
@@ -248,10 +625,10 @@ function getAllMilitaryPoints(guildId) {
     .sort((a, b) => b.points - a.points); // ترتيب تنازلي حسب النقاط
 }
 
-function setMilitaryCode(userId, guildId, code) {
+async function setMilitaryCode(userId, guildId, code) {
   if (!militaryData.codes[guildId]) militaryData.codes[guildId] = {};
   militaryData.codes[guildId][userId] = code;
-  saveAllData();
+  await saveAllData();
 }
 
 function getMilitaryCode(userId, guildId) {
@@ -266,7 +643,7 @@ function hasPendingMilitaryCodeRequest(userId, guildId) {
 // === دوال نظام التحذيرات العسكرية ===
 
 // دالة لإضافة تحذير عسكري
-function addMilitaryWarning(userId, guildId, warningNumber, reason, adminId, adminName, adminRank) {
+async function addMilitaryWarning(userId, guildId, warningNumber, reason, adminId, adminName, adminRank) {
   if (!militaryWarnings[guildId]) militaryWarnings[guildId] = {};
   if (!militaryWarnings[guildId][userId]) militaryWarnings[guildId][userId] = [];
   
@@ -293,7 +670,7 @@ function addMilitaryWarning(userId, guildId, warningNumber, reason, adminId, adm
   };
   
   militaryWarnings[guildId][userId].push(warning);
-  saveAllData();
+  await saveAllData();
   return warning;
 }
 
@@ -310,20 +687,20 @@ function getAllMilitaryWarnings(userId, guildId) {
 }
 
 // دالة لإضافة دليل تحذير
-function addWarningEvidence(warningId, userId, guildId, evidenceUrl) {
+async function addWarningEvidence(warningId, userId, guildId, evidenceUrl) {
   if (!militaryWarnings[guildId] || !militaryWarnings[guildId][userId]) return false;
   
   const warning = militaryWarnings[guildId][userId].find(w => w.id === warningId);
   if (warning) {
     warning.evidence = evidenceUrl;
-    saveAllData();
+    await saveAllData();
     return true;
   }
   return false;
 }
 
 // دالة لحذف تحذير
-function removeMilitaryWarning(warningId, userId, guildId, removalReason, removalAdminId, removalAdminName) {
+async function removeMilitaryWarning(warningId, userId, guildId, removalReason, removalAdminId, removalAdminName) {
   if (!militaryWarnings[guildId] || !militaryWarnings[guildId][userId]) return false;
   
   const warning = militaryWarnings[guildId][userId].find(w => w.id === warningId);
@@ -333,7 +710,7 @@ function removeMilitaryWarning(warningId, userId, guildId, removalReason, remova
     warning.removalDate = new Date().toISOString();
     warning.removalAdminId = removalAdminId;
     warning.removalAdminName = removalAdminName;
-    saveAllData();
+    await saveAllData();
     return true;
   }
   return false;
@@ -341,7 +718,7 @@ function removeMilitaryWarning(warningId, userId, guildId, removalReason, remova
 // === دوال نظام مباشرة العسكر ===
 
 // دالة لتحديث حالة العسكري
-function updateMilitaryUserStatus(userId, guildId, status) {
+async function updateMilitaryUserStatus(userId, guildId, status) {
   if (!militaryUsers[userId]) {
     // إنشاء عسكري جديد
     const identity = identities.find(id => id.userId === userId && id.guildId === guildId);
@@ -366,7 +743,7 @@ function updateMilitaryUserStatus(userId, guildId, status) {
     }
   }
   
-  saveAllData();
+  await saveAllData();
   return true;
 }
 
@@ -450,7 +827,7 @@ async function updateMilitaryPageImage(guildId) {
             users: pageUsers.map(u => u.userId)
           });
           
-          saveAllData();
+          await saveAllData();
         } catch (e) {
           console.error('خطأ في إنشاء صفحة جديدة:', e);
         }
@@ -465,7 +842,7 @@ async function updateMilitaryPageImage(guildId) {
 }
 
 // دالة لإضافة عسكري جديد أو تحديث بياناته
-function addOrUpdateMilitaryUser(userId, guildId, data) {
+async function addOrUpdateMilitaryUser(userId, guildId, data) {
   if (!militaryUsers[userId]) {
     militaryUsers[userId] = {
       fullName: data.fullName,
@@ -488,7 +865,7 @@ function addOrUpdateMilitaryUser(userId, guildId, data) {
     }
   }
   
-  saveAllData();
+  await saveAllData();
   return true;
 }
 
@@ -559,6 +936,37 @@ const commands = [
     .setName('العسكر')
     .setDescription('نظام العسكر - للأدمن فقط')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .toJSON(),
+  // إضافة أمر /مسح_الطلبات
+  new SlashCommandBuilder()
+    .setName('مسح_الطلبات')
+    .setDescription('حذف جميع الطلبات المعلقة - للأدمن فقط')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .toJSON(),
+  // إضافة أمر /backup
+  new SlashCommandBuilder()
+    .setName('backup')
+    .setDescription('إنشاء نسخة احتياطية من البيانات - للمطورين فقط')
+    .toJSON(),
+  // إضافة أمر /restore
+  new SlashCommandBuilder()
+    .setName('restore')
+    .setDescription('استرداد البيانات من النسخة الاحتياطية - للمطورين فقط')
+    .addStringOption(option =>
+      option.setName('backup_id')
+        .setDescription('معرف النسخة الاحتياطية')
+        .setRequired(true)
+    )
+    .toJSON(),
+  // إضافة أمر /db_stats
+  new SlashCommandBuilder()
+    .setName('db_stats')
+    .setDescription('عرض إحصائيات قاعدة البيانات - للمطورين فقط')
+    .toJSON(),
+  // إضافة أمر /cleanup
+  new SlashCommandBuilder()
+    .setName('cleanup')
+    .setDescription('تنظيف البيانات القديمة - للمطورين فقط')
     .toJSON()
 ];
 
@@ -582,6 +990,16 @@ client.on('disconnect', () => {
 
 client.once('ready', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
+  
+  // تحميل البيانات من قاعدة البيانات
+  try {
+    await loadAllData();
+    console.log('✅ تم تحميل جميع البيانات من قاعدة البيانات');
+  } catch (error) {
+    console.error('❌ خطأ في تحميل البيانات:', error);
+    console.log('ℹ️ سيتم استخدام البيانات الافتراضية');
+  }
+  
   console.log(`🔧 حالة البوت: ${getBotStatus() === 'online' ? '🟢 متصل' : '🔴 غير متصل'}`);
   
   // إضافة المزيد من الـ logs للتأكد من الاتصال
@@ -595,7 +1013,7 @@ client.once('ready', async () => {
   // حفظ اسم البوت الأصلي إذا لم يكن محفوظاً
   if (!originalBotName) {
     originalBotName = client.user.username;
-    saveAllData();
+    await await saveAllData();
   }
   
   // تغيير اسم البوت حسب الحالة المحفوظة
@@ -607,6 +1025,40 @@ client.once('ready', async () => {
       console.error('❌ خطأ في تغيير اسم البوت:', error);
     }
   }
+  
+  // إضافة النسخ الاحتياطي التلقائي والتنظيف
+  console.log('🔄 بدء إعداد النسخ الاحتياطي التلقائي...');
+  
+  // نسخ احتياطي تلقائي كل 6 ساعات
+  setInterval(async () => {
+    try {
+      await createBackup();
+      console.log('✅ تم إنشاء نسخة احتياطية تلقائية');
+    } catch (error) {
+      console.error('❌ خطأ في النسخ الاحتياطي التلقائي:', error);
+    }
+  }, 6 * 60 * 60 * 1000); // 6 ساعات
+  
+  // تنظيف تلقائي كل 24 ساعة
+  setInterval(async () => {
+    try {
+      await cleanupOldData();
+      console.log('✅ تم تنظيف البيانات القديمة');
+    } catch (error) {
+      console.error('❌ خطأ في التنظيف التلقائي:', error);
+    }
+  }, 24 * 60 * 60 * 1000); // 24 ساعة
+  
+  // فحص حجم قاعدة البيانات كل 12 ساعة
+  setInterval(async () => {
+    try {
+      await checkDatabaseSize();
+    } catch (error) {
+      console.error('❌ خطأ في فحص حجم قاعدة البيانات:', error);
+    }
+  }, 12 * 60 * 60 * 1000); // 12 ساعة
+  
+  console.log('✅ تم إعداد النسخ الاحتياطي التلقائي والتنظيف');
   
   // تسجيل الأمر في جميع السيرفرات التي يوجد بها البوت
   const rest = new REST({ version: '10' }).setToken(config.DISCORD_TOKEN);
@@ -629,10 +1081,203 @@ client.on('messageCreate', message => {
 });
 client.on('interactionCreate', async interaction => {
   try {
+    // معالج نماذج القبول والرفض (يجب أن يكون أولاً)
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('accept_modal_')) {
+      try {
+        const requestId = interaction.customId.replace('accept_modal_', '');
+        const reason = interaction.fields.getTextInputValue('accept_reason');
+        
+        console.log('🔍 معالجة قبول الطلب:', requestId);
+        console.log('📋 الطلبات المعلقة:', pendingRequests.map(req => ({ requestId: req.requestId, fullName: req.fullName })));
+        
+        // البحث عن الطلب
+        const requestIndex = pendingRequests.findIndex(req => req.requestId === requestId);
+        if (requestIndex === -1) {
+          console.log('❌ لم يتم العثور على الطلب:', requestId);
+          await interaction.reply({ content: '❌ لم يتم العثور على الطلب.', ephemeral: true });
+          return;
+        }
+        
+        const request = pendingRequests[requestIndex];
+        
+        // إنشاء الهوية المقبولة
+        const identity = {
+          userId: request.userId,
+          guildId: request.guildId,
+          fullName: request.fullName,
+          gender: request.gender,
+          city: request.city,
+          year: request.year,
+          month: request.month,
+          day: request.day,
+          nationalId: request.nationalId,
+          approvedAt: new Date().toISOString(),
+          approvedBy: interaction.user.id,
+          approvalReason: reason
+        };
+        
+        identities.push(identity);
+        pendingRequests.splice(requestIndex, 1);
+        await saveAllData();
+        
+        // إرسال رسالة تأكيد
+        await interaction.reply({ 
+          content: `✅ **لقد تم قبول هويتك بنجاح!**\n\n**السبب:** ${reason}\n**تم قبولك من قبل:** <@${interaction.user.id}>`, 
+          ephemeral: true 
+        });
+        
+        // إرسال إشعار للمستخدم
+        try {
+          const user = await client.users.fetch(request.userId);
+          const userEmbed = new EmbedBuilder()
+            .setTitle('✅ لقد تم قبول هويتك بنجاح!')
+            .setDescription(`**سبب القبول:** ${reason}\n**تم قبولك من قبل:** <@${interaction.user.id}>`)
+            .setColor('#00ff00')
+            .setTimestamp();
+          
+          await user.send({ embeds: [userEmbed] });
+        } catch (error) {
+          console.error('❌ خطأ في إرسال إشعار للمستخدم:', error);
+        }
+        
+        // تحديث الإيمبيد الأصلي للطلب
+        try {
+          const updatedEmbed = new EmbedBuilder()
+            .setTitle('✅ تم قبول الهوية')
+            .setDescription(`**المستخدم:** <@${request.userId}>\n**الاسم الكامل:** ${request.fullName}\n**الجنس:** ${request.gender === 'male' ? 'ذكر' : 'أنثى'}\n**المدينة:** ${request.city}\n**تاريخ الميلاد:** ${request.day} / ${request.month} / ${request.year}\n**رقم الهوية:** ${request.nationalId}\n**تم القبول من قبل:** <@${interaction.user.id}>\n**سبب القبول:** ${reason}`)
+            .setColor('#00ff00')
+            .setTimestamp()
+            .setThumbnail(interaction.user.displayAvatarURL());
+          
+          await interaction.message.edit({ 
+            embeds: [updatedEmbed], 
+            components: [] 
+          });
+        } catch (error) {
+          console.error('❌ خطأ في تحديث الإيمبيد:', error);
+        }
+
+        // إرسال سجل إلى قناة اللوق
+        try {
+          const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
+          if (logChannelId) {
+            const logChannel = interaction.guild.channels.cache.get(logChannelId);
+            if (logChannel) {
+              const logEmbed = new EmbedBuilder()
+                .setTitle('✅ تم قبول هوية جديدة')
+                .setDescription(`**تم قبول هوية:** ${request.fullName}\n**من قبل:** <@${interaction.user.id}>\n**السبب:** ${reason}\n**رقم الهوية:** ${request.nationalId}`)
+                .setColor('#00ff00')
+                .setTimestamp()
+                .setThumbnail(interaction.user.displayAvatarURL());
+              
+              await logChannel.send({ embeds: [logEmbed] });
+            }
+          }
+        } catch (error) {
+          console.error('❌ خطأ في إرسال سجل اللوق:', error);
+        }
+        
+        console.log('✅ تم قبول الطلب بنجاح:', requestId);
+        return;
+      } catch (error) {
+        console.error('❌ خطأ في معالجة قبول الطلب:', error);
+        await interaction.reply({ content: '❌ حدث خطأ أثناء معالجة قبول الطلب. يرجى المحاولة مرة أخرى.', ephemeral: true });
+        return;
+      }
+    }
+    
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('reject_modal_')) {
+      try {
+        const requestId = interaction.customId.replace('reject_modal_', '');
+        const reason = interaction.fields.getTextInputValue('reject_reason');
+        
+        console.log('🔍 معالجة رفض الطلب:', requestId);
+        console.log('📋 الطلبات المعلقة:', pendingRequests.map(req => ({ requestId: req.requestId, fullName: req.fullName })));
+        
+        // البحث عن الطلب
+        const requestIndex = pendingRequests.findIndex(req => req.requestId === requestId);
+        if (requestIndex === -1) {
+          console.log('❌ لم يتم العثور على الطلب:', requestId);
+          await interaction.reply({ content: '❌ لم يتم العثور على الطلب.', ephemeral: true });
+          return;
+        }
+        
+        const request = pendingRequests[requestIndex];
+        
+        // حذف الطلب
+        pendingRequests.splice(requestIndex, 1);
+        await saveAllData();
+        
+        // إرسال رسالة تأكيد
+        await interaction.reply({ 
+          content: `❌ **لقد تم رفض هويتك**\n\n**السبب:** ${reason}\n**تم رفضك من قبل:** <@${interaction.user.id}>`, 
+          ephemeral: true 
+        });
+        
+        // إرسال إشعار للمستخدم
+        try {
+          const user = await client.users.fetch(request.userId);
+          const userEmbed = new EmbedBuilder()
+            .setTitle('❌ لقد تم رفض هويتك')
+            .setDescription(`**سبب الرفض:** ${reason}\n**تم رفضك من قبل:** <@${interaction.user.id}>\n\nيمكنك تقديم طلب جديد إذا أردت.`)
+            .setColor('#ff0000')
+            .setTimestamp();
+          
+          await user.send({ embeds: [userEmbed] });
+        } catch (error) {
+          console.error('❌ خطأ في إرسال إشعار للمستخدم:', error);
+        }
+        
+        // تحديث الإيمبيد الأصلي للطلب
+        try {
+          const updatedEmbed = new EmbedBuilder()
+            .setTitle('❌ تم رفض الهوية')
+            .setDescription(`**المستخدم:** <@${request.userId}>\n**الاسم الكامل:** ${request.fullName}\n**الجنس:** ${request.gender === 'male' ? 'ذكر' : 'أنثى'}\n**المدينة:** ${request.city}\n**تاريخ الميلاد:** ${request.day} / ${request.month} / ${request.year}\n**رقم الهوية:** ${request.nationalId}\n**تم الرفض من قبل:** <@${interaction.user.id}>\n**سبب الرفض:** ${reason}`)
+            .setColor('#ff0000')
+            .setTimestamp()
+            .setThumbnail(interaction.user.displayAvatarURL());
+          
+          await interaction.message.edit({ 
+            embeds: [updatedEmbed], 
+            components: [] 
+          });
+        } catch (error) {
+          console.error('❌ خطأ في تحديث الإيمبيد:', error);
+        }
+
+        // إرسال سجل إلى قناة اللوق
+        try {
+          const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
+          if (logChannelId) {
+            const logChannel = interaction.guild.channels.cache.get(logChannelId);
+            if (logChannel) {
+              const logEmbed = new EmbedBuilder()
+                .setTitle('❌ تم رفض هوية')
+                .setDescription(`**تم رفض هوية:** ${request.fullName}\n**من قبل:** <@${interaction.user.id}>\n**السبب:** ${reason}`)
+                .setColor('#ff0000')
+                .setTimestamp()
+                .setThumbnail(interaction.user.displayAvatarURL());
+              
+              await logChannel.send({ embeds: [logEmbed] });
+            }
+          }
+        } catch (error) {
+          console.error('❌ خطأ في إرسال سجل اللوق:', error);
+        }
+        
+        console.log('✅ تم رفض الطلب بنجاح:', requestId);
+        return;
+      } catch (error) {
+        console.error('❌ خطأ في معالجة رفض الطلب:', error);
+        await interaction.reply({ content: '❌ حدث خطأ أثناء معالجة رفض الطلب. يرجى المحاولة مرة أخرى.', ephemeral: true });
+        return;
+      }
+    }
+
     // --- التحقق من حالة البوت أولاً ---
     if (!checkBotStatus() && interaction.commandName !== 'المطور' && 
         !interaction.customId?.startsWith('dev_') && 
-        !interaction.customId?.startsWith('toggle_bot_') && 
+        !interaction.customId?.startsWith('toggle_bot_') &&
         !interaction.customId?.startsWith('change_embed_')) {
       // الحصول على أول مطور في السيرفر
       let developerMention = '';
@@ -653,11 +1298,6 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
-    // --- التحقق من الإعدادات قبل أي إجراء هوية ---
-    function checkGuildSettings(guildId) {
-      const s = guildSettings[guildId];
-      return s && s.logChannelId && s.reviewChannelId && s.approvalRoleId;
-    }
 
     // معالجة أمر /بطاقة
     if (interaction.isChatInputCommand() && interaction.commandName === 'بطاقة') {
@@ -861,39 +1501,31 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
-    // معالج اختيار الشهر → يعرض اختيار اليوم
+    // معالج اختيار الشهر → يختار يوم عشوائي تلقائياً
     if (interaction.isStringSelectMenu() && interaction.customId === 'select_month') {
       const selectedMonth = interaction.values[0];
       userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
       userSteps[interaction.user.id].month = selectedMonth;
-      // لا نستخدم deferReply هنا؛ سنحدّث نفس رسالة القائمة مباشرة
-      const daysInMonth = (m => ({
-        '1': 31, '2': 29, '3': 31, '4': 30, '5': 31, '6': 30,
-        '7': 31, '8': 31, '9': 30, '10': 31, '11': 30, '12': 31
-      }[m] || 31))(selectedMonth);
-      // إنشاء قائمتين فقط: 1-24 و 25-30 (مع مراعاة حد الشهر)
-      const dayRows = [];
-      const maxDayToShow = Math.min(30, daysInMonth);
-      const firstEnd = Math.min(24, maxDayToShow);
-      if (firstEnd >= 1) {
-        const firstOptions = Array.from({ length: firstEnd }, (_, i) => ({ label: String(i + 1), value: String(i + 1) }));
-        const firstSelect = new StringSelectMenuBuilder()
-          .setCustomId('select_day_0')
-          .setPlaceholder('اختر يوم ميلادك')
-          .addOptions(firstOptions);
-        dayRows.push(new ActionRowBuilder().addComponents(firstSelect));
-      }
-      if (maxDayToShow >= 25) {
-        const secondOptions = Array.from({ length: maxDayToShow - 25 + 1 }, (_, i) => ({ label: String(25 + i), value: String(25 + i) }));
-        const secondSelect = new StringSelectMenuBuilder()
-          .setCustomId('select_day_1')
-          .setPlaceholder(`الأيام 25 - ${maxDayToShow}`)
-          .addOptions(secondOptions);
-        dayRows.push(new ActionRowBuilder().addComponents(secondSelect));
-      }
-      // ثبّت التفاعل ثم أرسل رسالة مؤقتة جديدة بقوائم الأيام
+      
+      // اختيار يوم عشوائي من 1 إلى 30
+      const randomDay = Math.floor(Math.random() * 30) + 1;
+      userSteps[interaction.user.id].day = randomDay.toString();
+      
+      // تعريف أسماء الشهور
+      const monthNames = {
+        '1': 'يناير', '2': 'فبراير', '3': 'مارس', '4': 'أبريل', '5': 'مايو', '6': 'يونيو',
+        '7': 'يوليو', '8': 'أغسطس', '9': 'سبتمبر', '10': 'أكتوبر', '11': 'نوفمبر', '12': 'ديسمبر'
+      };
+      
+      // تحديث الرسالة لإظهار اليوم المختار عشوائياً
       try { if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate(); } catch (_) {}
-      await interaction.followUp({ content: 'يرجى اختيار يوم ميلادك من القائمة أدناه:', components: dayRows, ephemeral: true });
+      await interaction.followUp({ 
+        content: `✅ تم اختيار شهر الميلاد: ${monthNames[selectedMonth]}\n🎲 تم اختيار يوم عشوائي: ${randomDay}\n\nيتم الآن إنشاء الطلب...`, 
+        ephemeral: true 
+      });
+      
+      // متابعة باقي الخطوات مباشرة
+      await processIdentityRequest(interaction, userSteps[interaction.user.id]);
       return;
     }
 
@@ -1070,9 +1702,6 @@ client.on('interactionCreate', async interaction => {
         modal.addComponents(modalRow);
         await interaction.showModal(modal);
       }
-      
-
-
 
 
     // معالج زر حذف دليل تحذير
@@ -1183,7 +1812,7 @@ client.on('interactionCreate', async interaction => {
       warning.evidence = null;
       if (!warning.evidenceHistory) warning.evidenceHistory = [];
       warning.evidenceHistory.push({ url: oldEvidence, removedBy: interaction.user.id, removedAt: new Date().toISOString(), reason });
-      saveAllData();
+      await saveAllData();
       // إرسال تأكيد
       const embed = new EmbedBuilder()
         .setTitle('✅ تم حذف دليل التحذير')
@@ -1213,211 +1842,6 @@ client.on('interactionCreate', async interaction => {
 
 
 
-        // معالج اختيار اليوم (يدعم عدة قوائم: select_day_0, select_day_1, ...)
-        if (interaction.isStringSelectMenu() && interaction.customId.startsWith('select_day')) {
-          try {
-            console.log('🔍 معالجة اختيار اليوم...');
-
-            const selectedDay = interaction.values && interaction.values[0] ? interaction.values[0] : null;
-            if (!selectedDay) {
-              // لا يمكن التحديث بدون قيمة صحيحة
-              try {
-                if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate();
-                try { await interaction.message.edit({ content: '❌ لم يتم اختيار يوم صالح.', components: [] }); } catch (_) {}
-              } catch (_) {
-                try { await interaction.reply({ content: '❌ لم يتم اختيار يوم صالح.', ephemeral: true }); } catch (_) {}
-              }
-              return;
-            }
-
-            // اعترف بالتفاعل مبكرًا لتجنب فشل المهلة، ثم عدّل الرسالة
-            try { if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate(); } catch (_) {}
-            try { await interaction.message.edit({ content: `✅ تم اختيار يوم الميلاد: ${selectedDay}. يتم الآن إنشاء الطلب...`, components: [] }); } catch (_) {}
-
-            // تحقق من توافر guild للتأكد أن التفاعل ليس في الخاص
-            if (!interaction.guildId) {
-              await interaction.followUp({ content: '❌ يجب إكمال الخطوات داخل السيرفر.', ephemeral: true });
-              return;
-            }
-
-            // حفظ اليوم والرقم الوطني المؤقت
-            userSteps[interaction.user.id] = userSteps[interaction.user.id] || {};
-            userSteps[interaction.user.id].day = selectedDay;
-            const nationalId = Math.floor(1000 + Math.random() * 9000).toString();
-            userSteps[interaction.user.id].nationalId = nationalId;
-
-            const data = userSteps[interaction.user.id];
-
-            // تحقق من البيانات المطلوبة قبل المتابعة
-            if (!data.fullName || !data.gender || !data.city || !data.year || !data.month) {
-              await interaction.followUp({ content: '⚠️ يرجى إكمال جميع الخطوات (الاسم، الجنس، المدينة، السنة، الشهر) قبل اختيار اليوم.', ephemeral: true });
-              return;
-            }
-
-            // تم التأكيد عبر update أعلاه؛ نكمل الآن
-
-            const monthNames = {
-              '1': 'يناير', '2': 'فبراير', '3': 'مارس', '4': 'أبريل', '5': 'مايو', '6': 'يونيو',
-              '7': 'يوليو', '8': 'أغسطس', '9': 'سبتمبر', '10': 'أكتوبر', '11': 'نوفمبر', '12': 'ديسمبر'
-            };
-            const cityNames = {
-              'los_santos': 'لوس سانتوس',
-              'sandy_shore': 'ساندي شور',
-              'paleto': 'بوليتو'
-            };
-            const birthDate = `${data.day} / ${monthNames[data.month]} / ${data.year}`;
-            const city = cityNames[data.city] || data.city;
-
-            // --- جلب السيرفر الصحيح ---
-            const guild = client.guilds.cache.get(interaction.guildId) || await client.guilds.fetch(interaction.guildId).catch(() => null);
-            if (!guild) {
-              await interaction.followUp({ content: '❌ لا يمكن العثور على السيرفر الأصلي لهذا الطلب.', ephemeral: true });
-              delete userSteps[interaction.user.id];
-              return;
-            }
-            if (!checkGuildSettings(interaction.guildId)) {
-              await interaction.followUp({ content: '❌ يجب تعيين جميع الإعدادات أولاً من خلال /الادارة في السيرفر.', ephemeral: true });
-              delete userSteps[interaction.user.id];
-              return;
-            }
-
-            try {
-              // إنشاء بطاقة
-              const cardWidth = 600;
-              const cardHeight = 400;
-              const canvas = createCanvas(cardWidth, cardHeight);
-              const ctx = canvas.getContext('2d');
-
-              ctx.fillStyle = '#f5f5f5';
-              ctx.fillRect(0, 0, cardWidth, cardHeight);
-
-              ctx.fillStyle = '#1e3a8a';
-              ctx.fillRect(0, 0, cardWidth, 60);
-
-              ctx.fillStyle = '#1e3a8a';
-              ctx.fillRect(0, cardHeight - 50, cardWidth, 50);
-
-              ctx.fillStyle = '#ffffff';
-              ctx.font = 'bold 24px Arial';
-              ctx.textAlign = 'center';
-              ctx.fillText('بطاقة الهوية الرسمية', cardWidth / 2, 35);
-
-              const avatarURL = interaction.user.displayAvatarURL({ extension: 'png', size: 256 });
-              let avatar = null;
-              try { avatar = await loadImage(avatarURL); } catch (_) { avatar = null; }
-              const avatarSize = 120;
-              const avatarX = 50;
-              const avatarY = 80;
-
-              ctx.fillStyle = '#e5e7eb';
-              ctx.beginPath();
-              ctx.arc(avatarX + avatarSize/2, avatarY + avatarSize/2, avatarSize/2 + 5, 0, Math.PI * 2);
-              ctx.fill();
-
-              if (avatar) {
-                ctx.save();
-                ctx.beginPath();
-                ctx.arc(avatarX + avatarSize/2, avatarY + avatarSize/2, avatarSize/2, 0, Math.PI * 2, true);
-                ctx.closePath();
-                ctx.clip();
-                ctx.drawImage(avatar, avatarX, avatarY, avatarSize, avatarSize);
-                ctx.restore();
-              }
-
-              ctx.fillStyle = '#1f2937';
-              ctx.font = 'bold 16px Arial';
-              ctx.textAlign = 'right';
-              const labels = [
-                { text: 'الاسم الكامل', y: 100 },
-                { text: 'المدينة', y: 140 },
-                { text: 'تاريخ الميلاد', y: 180 },
-                { text: 'الجنسية', y: 220 },
-                { text: 'رقم الهوية', y: 260 }
-              ];
-              labels.forEach(label => { ctx.fillText(label.text, 280, label.y); });
-
-              ctx.textAlign = 'left';
-              ctx.font = '16px Arial';
-              ctx.fillText(data.fullName, 300, 100);
-              ctx.fillText(city, 300, 140);
-              const birthTextAr = `${data.day} / ${monthNames[data.month]} / ${data.year}`;
-              ctx.fillText(birthTextAr, 300, 180);
-              const genderText = data.gender === 'male' ? 'ذكر' : 'أنثى';
-              ctx.fillText(genderText, 300, 220);
-              ctx.fillText(nationalId, 300, 260);
-
-              ctx.fillStyle = '#ffffff';
-              ctx.font = '16px Arial';
-              ctx.textAlign = 'right';
-              ctx.fillText('تاريخ الإصدار :', cardWidth - 20, cardHeight - 20);
-              ctx.textAlign = 'left';
-              ctx.fillText(birthTextAr, 20, cardHeight - 20);
-
-              ctx.fillStyle = '#fbbf24';
-              ctx.beginPath();
-              ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
-              ctx.fill();
-              ctx.fillStyle = '#1e3a8a';
-              ctx.font = 'bold 14px Arial';
-              ctx.textAlign = 'center';
-              ctx.fillText('MDT', 50, cardHeight - 75);
-
-              const buffer = canvas.toBuffer('image/png');
-
-              const requestId = Date.now().toString();
-              const pendingRequest = {
-                requestId: requestId,
-                guildId: interaction.guildId,
-                userId: interaction.user.id,
-                username: interaction.user.username,
-                fullName: data.fullName,
-                gender: data.gender,
-                city: data.city,
-                year: data.year,
-                month: data.month,
-                day: data.day,
-                nationalId: nationalId,
-                createdAt: new Date().toISOString(),
-                status: 'pending'
-              };
-              pendingRequests.push(pendingRequest);
-              saveAllData();
-
-              const reviewChannelId = guildSettings[interaction.guildId].reviewChannelId;
-              const reviewChannel = guild.channels.cache.get(reviewChannelId);
-              if (reviewChannel) {
-                const reviewEmbed = new EmbedBuilder()
-                  .setTitle('طلب هوية جديد')
-                  .setDescription(`**المستخدم:** ${interaction.user} (${interaction.user.username})\n**الاسم:** ${data.fullName}\n**الجنس:** ${data.gender === 'male' ? 'ذكر' : 'أنثى'}\n**المدينة:** ${city}\n**تاريخ الميلاد:** ${birthTextAr}\n**رقم الهوية:** ${nationalId}\n**رقم الطلب:** ${requestId}`)
-                  .setThumbnail(interaction.user.displayAvatarURL())
-                  .setColor('#ffa500')
-                  .setTimestamp();
-                const acceptButton = new ButtonBuilder().setCustomId(`accept_${requestId}`).setLabel('قبول').setStyle(ButtonStyle.Success);
-                const rejectButton = new ButtonBuilder().setCustomId(`reject_${requestId}`).setLabel('رفض').setStyle(ButtonStyle.Danger);
-                const row = new ActionRowBuilder().addComponents(acceptButton, rejectButton);
-                await reviewChannel.send({ embeds: [reviewEmbed], components: [row], files: [{ attachment: buffer, name: 'id_card.png' }] });
-              }
-
-              await interaction.followUp({ content: `✅ تم إرسال طلب إنشاء هويتك بنجاح! رقم طلبك: **${requestId}**`, ephemeral: true });
-              try { await interaction.followUp({ files: [{ attachment: buffer, name: 'id_card.png' }], ephemeral: true }); } catch (_) {}
-
-              delete userSteps[interaction.user.id];
-            } catch (err) {
-              console.error('خطأ في إنشاء البطاقة:', err);
-              await interaction.followUp({ content: '❌ حدث خطأ أثناء إنشاء البطاقة، حاول مرة أخرى.', ephemeral: true });
-              delete userSteps[interaction.user.id];
-            }
-          } catch (error) {
-            console.error('❌ خطأ في معالجة اختيار اليوم:', error);
-            try {
-              await interaction.followUp({ content: '❌ حدث خطأ أثناء معالجة اختيار اليوم. يرجى المحاولة مرة أخرى.', ephemeral: true });
-            } catch (replyError) {
-              console.error('❌ فشل في إرسال رسالة الخطأ:', replyError);
-            }
-            delete userSteps[interaction.user.id];
-          }
-          return;
-        }
       }
 
       // معالجة أمر /الادارة
@@ -1575,6 +1999,18 @@ client.on('interactionCreate', async interaction => {
           await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
           return;
         }
+        if (selected === 'clear_pending_requests') {
+          // حذف جميع الطلبات المعلقة
+          const deletedCount = pendingRequests.length;
+          pendingRequests.length = 0;
+          await saveAllData();
+          
+          await interaction.reply({ 
+            content: `✅ تم حذف **${deletedCount}** طلب معلق بنجاح!\n\n📋 **التفاصيل:**\n• تم حذف جميع الطلبات المعلقة\n• يمكن للمستخدمين الآن تقديم طلبات جديدة\n• تم حفظ التغييرات في قاعدة البيانات`, 
+            ephemeral: true 
+          });
+          return;
+        }
         // باقي الخيارات يتم التعامل معها في أماكن أخرى أو لاحقاً
       } catch (e) {
         await interaction.reply({ content: '❌ حدث خطأ أثناء فتح النافذة.', ephemeral: true });
@@ -1626,7 +2062,7 @@ client.on('interactionCreate', async interaction => {
       const request = pendingMilitaryCodeRequests[requestIndex];
       setMilitaryCode(userId, interaction.guildId, request.code);
       pendingMilitaryCodeRequests.splice(requestIndex, 1);
-      saveAllData();
+      await saveAllData();
       
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
@@ -1658,7 +2094,7 @@ client.on('interactionCreate', async interaction => {
       
       const request = pendingMilitaryCodeRequests[requestIndex];
       pendingMilitaryCodeRequests.splice(requestIndex, 1);
-      saveAllData();
+      await saveAllData();
       
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
@@ -1686,7 +2122,7 @@ client.on('interactionCreate', async interaction => {
       if (!guildSettings[guildId]) guildSettings[guildId] = {};
       const oldLog = guildSettings[guildId].logChannelId;
       guildSettings[guildId].logChannelId = logChannelId;
-      saveAllData();
+      await saveAllData();
       // إرسال إيمبيد في روم اللوق الجديد
       try {
         const guildLog = interaction.guild;
@@ -1712,7 +2148,7 @@ client.on('interactionCreate', async interaction => {
       const guildId = interaction.guildId;
       if (!guildSettings[guildId]) guildSettings[guildId] = {};
       guildSettings[guildId].reviewChannelId = reviewChannelId;
-      saveAllData();
+      await saveAllData();
       // إرسال لوق في روم اللوق إذا كان معينًا
       const logChannelId = guildSettings[guildId].logChannelId;
       if (logChannelId) {
@@ -1741,7 +2177,7 @@ client.on('interactionCreate', async interaction => {
       const guildId = interaction.guildId;
       if (!guildSettings[guildId]) guildSettings[guildId] = {};
       guildSettings[guildId].approvalRoleId = approvalRoleId;
-      saveAllData();
+      await saveAllData();
       // إرسال لوق في روم اللوق إذا كان معينًا
       const logChannelId = guildSettings[guildId].logChannelId;
       if (logChannelId) {
@@ -1770,7 +2206,7 @@ client.on('interactionCreate', async interaction => {
       const guildId = interaction.guildId;
       if (!guildSettings[guildId]) guildSettings[guildId] = {};
       guildSettings[guildId].policeRoleId = policeRoleId;
-      saveAllData();
+      await saveAllData();
       // إرسال لوق في روم اللوق إذا كان معينًا
       const logChannelId = guildSettings[guildId].logChannelId;
       if (logChannelId) {
@@ -1794,7 +2230,7 @@ client.on('interactionCreate', async interaction => {
       const guildId = interaction.guildId;
       if (!guildSettings[guildId]) guildSettings[guildId] = {};
       guildSettings[guildId].createRoomChannelId = createRoomChannelId;
-      saveAllData();
+      await saveAllData();
       // إرسال لوق في روم اللوق إذا كان معينًا
       const logChannelId = guildSettings[guildId].logChannelId;
       if (logChannelId) {
@@ -1819,7 +2255,7 @@ client.on('interactionCreate', async interaction => {
       const guildId = interaction.guildId;
       if (!guildSettings[guildId]) guildSettings[guildId] = {};
       guildSettings[guildId].directMilitaryRoomId = directRoomId;
-      saveAllData();
+      await saveAllData();
       
       // إرسال لوق في روم اللوق
       const logChannelId = guildSettings[guildId].logChannelId;
@@ -1846,7 +2282,7 @@ client.on('interactionCreate', async interaction => {
       const guildId = interaction.guildId;
       if (!guildSettings[guildId]) guildSettings[guildId] = {};
       guildSettings[guildId].militaryCodeReviewRoomId = reviewRoomId;
-      saveAllData();
+      await saveAllData();
       
       // إرسال لوق في روم اللوق
       const logChannelId = guildSettings[guildId].logChannelId;
@@ -1872,7 +2308,7 @@ client.on('interactionCreate', async interaction => {
       const guildId = interaction.guildId;
       if (!guildSettings[guildId]) guildSettings[guildId] = {};
       guildSettings[guildId].policeAdminRoleId = policeAdminRoleId;
-      saveAllData();
+      await saveAllData();
       // إرسال لوق في روم اللوق إذا كان معينًا
       const logChannelId = guildSettings[guildId].logChannelId;
       if (logChannelId) {
@@ -1985,7 +2421,7 @@ client.on('interactionCreate', async interaction => {
       
       // إضافة الطلب إلى القائمة المعلقة
       pendingMilitaryCodeRequests.push(request);
-      saveAllData();
+      await saveAllData();
       
       // إرسال الطلب إلى روم قبول الأكواد العسكرية
       const reviewRoomId = guildSettings[guildId]?.militaryCodeReviewRoomId;
@@ -2240,6 +2676,7 @@ client.on('interactionCreate', async interaction => {
           { label: 'إضافة رتبة مسؤول الشرطة', value: 'set_police_admin_role' },
           { label: 'تعيين روم إنشاء الهوية', value: 'set_create_room_channel' },
           { label: 'تعديل | حذف الهوية', value: 'edit_delete_identity' },
+          { label: 'مسح الطلبات المعلقة', value: 'clear_pending_requests', description: 'حذف جميع الطلبات المعلقة' },
           { label: 'إعادة تعيين', value: 'reset', description: 'إعادة تعيين جميع الإعدادات' }
         ]);
       const row = new ActionRowBuilder().addComponents(selectMenu);
@@ -2362,7 +2799,7 @@ client.on('interactionCreate', async interaction => {
       identity.day = preview.day;
       identity.month = preview.month;
       identity.year = preview.year;
-      saveAllData();
+      await saveAllData();
       // إرسال لوق في روم اللوق
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
@@ -2429,7 +2866,7 @@ client.on('interactionCreate', async interaction => {
         return;
       }
       identities = identities.filter(i => i.userId !== userId);
-      saveAllData();
+      await saveAllData();
       // إرسال لوق في روم اللوق
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
@@ -2463,7 +2900,7 @@ client.on('interactionCreate', async interaction => {
       }
       const oldName = identity.fullName;
       identity.fullName = fullName;
-      saveAllData();
+      await saveAllData();
       // إرسال لوق في روم اللوق
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
@@ -2870,7 +3307,7 @@ client.on('interactionCreate', async interaction => {
       }
       const oldName = identity.fullName;
       identity.fullName = fullName;
-      saveAllData();
+      await saveAllData();
       // إرسال لوق في روم اللوق
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
@@ -2945,6 +3382,15 @@ client.on('interactionCreate', async interaction => {
       // تحقق من صلاحية الأدمن
       if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
         await interaction.reply({ content: '❌ هذا الأمر مخصص فقط للأدمن.', ephemeral: true });
+        return;
+      }
+      
+      // تحقق من البريميوم
+      if (!premiumServers.has(interaction.guildId)) {
+        await interaction.reply({ 
+          content: '❌ **أمر /العسكر متاح فقط للسيرفرات المميزة!**\n\n⭐ **للحصول على البريميوم:**\n• تواصل مع أحد المطورين\n• أو استخدم أمر `/المطور` إذا كنت مطور\n\n🎯 **فوائد البريميوم:**\n• تفعيل أمر /العسكر بشكل كامل\n• ميزات إضافية متقدمة\n• دعم أولوية من المطورين', 
+          ephemeral: true 
+        });
         return;
       }
       
@@ -3936,7 +4382,7 @@ client.on('interactionCreate', async interaction => {
       }
       const oldName = identity.fullName;
       identity.fullName = fullName;
-      saveAllData();
+      await saveAllData();
       // إرسال لوق في روم اللوق
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
@@ -4539,7 +4985,7 @@ if (interaction.isButton() && interaction.customId.startsWith('confirm_delete_ev
     return;
   }
   const removedUrl = c.evidence.splice(evidenceIdx, 1)[0];
-  saveAllData();
+  await saveAllData();
   // إرسال لوق في روم اللوق
   const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
   if (logChannelId) {
@@ -4695,7 +5141,7 @@ if (interaction.isButton() && interaction.customId.startsWith('confirm_delete_ev
       }
       if (!identity.violations) identity.violations = [];
       identity.violations.push({ id: Date.now().toString() + Math.random().toString().slice(2,8), name: selectedTitle, desc: desc, status: 'غير مسددة' });
-      saveAllData();
+      await saveAllData();
       // إرسال لوق في روم اللوق
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
@@ -4800,7 +5246,7 @@ if (interaction.isButton() && interaction.customId.startsWith('confirm_delete_ev
         return;
       }
       const removed = identity.violations.splice(idx, 1)[0];
-      saveAllData();
+      await saveAllData();
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
         try {
@@ -4929,7 +5375,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         return;
       }
       identity.violations[idx].status = status;
-      saveAllData();
+      await saveAllData();
       // إرسال لوق في روم اللوق
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
@@ -5093,7 +5539,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       }
       if (!identity.crimes) identity.crimes = [];
       identity.crimes.push({ id: Date.now().toString() + Math.random().toString().slice(2,8), title: selectedTitle, desc: desc, done: false });
-      saveAllData();
+      await saveAllData();
       // إرسال لوق في روم اللوق
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
@@ -5198,7 +5644,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         return;
       }
       const removed = identity.crimes.splice(idx, 1)[0];
-      saveAllData();
+      await saveAllData();
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
         try {
@@ -5326,7 +5772,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         return;
       }
       identity.crimes[idx].done = done;
-      saveAllData();
+      await saveAllData();
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
         try {
@@ -5489,7 +5935,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       }
       if (!identity.crimes) identity.crimes = [];
       identity.crimes.push({ id: Date.now().toString() + Math.random().toString().slice(2,8), title: selectedTitle, desc: desc, done: false });
-      saveAllData();
+      await saveAllData();
       // إرسال لوق في روم اللوق
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
@@ -5849,7 +6295,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       }
       if (!identity.crimes[idx].evidence) identity.crimes[idx].evidence = [];
       identity.crimes[idx].evidence.push(url);
-      saveAllData();
+      await saveAllData();
       // إرسال لوق في روم اللوق
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
@@ -5982,7 +6428,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       }
       const oldName = identity.fullName;
       identity.fullName = fullName;
-      saveAllData();
+      await saveAllData();
       // إرسال لوق في روم اللوق
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
@@ -6136,7 +6582,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       // حفظ الرابط في إعدادات السيرفر
       if (!guildSettings[guildId]) guildSettings[guildId] = {};
       guildSettings[guildId].customEmbedImage = url;
-      saveAllData();
+      await saveAllData();
       
       // جلب اسم السيرفر للرسالة
       const guild = client.guilds.cache.get(guildId);
@@ -6146,6 +6592,307 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         content: `✅ تم تغيير صورة الإمبد بنجاح لجميع الأوامر في سيرفر **${guildName}**!\n\n📋 **التفاصيل:**\n• سيتم تطبيق التغيير على جميع الأوامر في السيرفر\n• سيتم حفظ التغيير بشكل دائم\n• لن تفقد حتى عند إيقاف السيرفر\n• يمكنك إعادة تعيين الإمبد من زر "إعادة تعيين الإمبد"\n\n🔗 **رابط الصورة:**\n${url}\n\n💡 **ملاحظة:** التغيير سيظهر في جميع الأوامر مثل /بطاقة، /الادارة، /هويتي، /الشرطة، /العسكر، /المطور\n\n🎯 **الأوامر المتأثرة:**\n• /بطاقة - إنشاء بطاقة هوية\n• /الادارة - إدارة الهويات\n• /هويتي - عرض هويتك\n• /الشرطة - أوامر الشرطة\n• /العسكر - نظام العسكر\n• /المطور - أوامر المطور`, 
         ephemeral: true 
       });
+      return;
+    }
+
+    // عند اختيار البريميوم من قائمة المطور
+    if (interaction.isStringSelectMenu() && interaction.customId === 'dev_menu' && interaction.values[0] === 'premium_management') {
+      // تحقق من أن المستخدم مطور مصرح له
+      if (!isDeveloper(interaction.user.id)) {
+        await interaction.reply({ 
+          content: '❌ هذا الأمر مخصص فقط للمطورين المصرح لهم.', 
+          ephemeral: true 
+        });
+        return;
+      }
+      
+      // جلب جميع السيرفرات التي يوجد فيها البوت
+      const guilds = client.guilds.cache.map(g => g);
+      const page = 1;
+      const pageSize = 10;
+      const totalPages = Math.ceil(guilds.length / pageSize);
+      const start = (page - 1) * pageSize;
+      const end = start + pageSize;
+      const pageGuilds = guilds.slice(start, end);
+      
+      const options = pageGuilds.map(guild => ({
+        label: `${guild.name} ${premiumServers.has(guild.id) ? '⭐' : ''}`,
+        value: `premium_guild_${guild.id}`,
+        description: `${guild.memberCount} عضو • ${premiumServers.has(guild.id) ? 'مميز' : 'عادي'}`
+      }));
+      
+      if (totalPages > 1) {
+        options.push({ label: 'الصفحة التالية', value: `premium_page_${page + 1}` });
+      }
+      
+      const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId(`premium_guilds_page_${page}`)
+        .setPlaceholder('اختر سيرفر لإدارة البريميوم')
+        .addOptions(options);
+      
+      const row = new ActionRowBuilder().addComponents(selectMenu);
+      
+      const embed = new EmbedBuilder()
+        .setTitle('إدارة البريميوم')
+        .setDescription(`**إجمالي السيرفرات:** ${guilds.length}\n**السيرفرات المميزة:** ${premiumServers.size}\n**السيرفرات العادية:** ${guilds.length - premiumServers.size}`)
+        .setColor('#ffd700')
+        .setTimestamp();
+      
+      await interaction.update({ embeds: [embed], components: [row] });
+      return;
+    }
+
+    // معالجة اختيار سيرفر محدد من قائمة البريميوم
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('premium_guilds_page_')) {
+      if (!isDeveloper(interaction.user.id)) {
+        await interaction.reply({ 
+          content: '❌ هذا الأمر مخصص فقط للمطورين المصرح لهم.', 
+          ephemeral: true 
+        });
+        return;
+      }
+      
+      const selectedValue = interaction.values[0];
+      
+      // معالجة التنقل بين الصفحات
+      if (selectedValue.startsWith('premium_page_')) {
+        const page = parseInt(selectedValue.replace('premium_page_', ''));
+        const guilds = client.guilds.cache.map(g => g);
+        const pageSize = 10;
+        const totalPages = Math.ceil(guilds.length / pageSize);
+        const start = (page - 1) * pageSize;
+        const end = start + pageSize;
+        const pageGuilds = guilds.slice(start, end);
+        
+        const options = pageGuilds.map(guild => ({
+          label: `${guild.name} ${premiumServers.has(guild.id) ? '⭐' : ''}`,
+          value: `premium_guild_${guild.id}`,
+          description: `${guild.memberCount} عضو • ${premiumServers.has(guild.id) ? 'مميز' : 'عادي'}`
+        }));
+        
+        if (page > 1) {
+          options.unshift({ label: 'الصفحة السابقة', value: `premium_page_${page - 1}` });
+        }
+        if (page < totalPages) {
+          options.push({ label: 'الصفحة التالية', value: `premium_page_${page + 1}` });
+        }
+        
+        const selectMenu = new StringSelectMenuBuilder()
+          .setCustomId(`premium_guilds_page_${page}`)
+          .setPlaceholder('اختر سيرفر لإدارة البريميوم')
+          .addOptions(options);
+        
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+        
+        const embed = new EmbedBuilder()
+          .setTitle('إدارة البريميوم')
+          .setDescription(`**إجمالي السيرفرات:** ${guilds.length}\n**السيرفرات المميزة:** ${premiumServers.size}\n**السيرفرات العادية:** ${guilds.length - premiumServers.size}\n**الصفحة:** ${page}/${totalPages}`)
+          .setColor('#ffd700')
+          .setTimestamp();
+        
+        await interaction.update({ embeds: [embed], components: [row] });
+        return;
+      }
+      
+      // معالجة اختيار سيرفر محدد
+      if (selectedValue.startsWith('premium_guild_')) {
+        const guildId = selectedValue.replace('premium_guild_', '');
+        const guild = client.guilds.cache.get(guildId);
+        
+        if (!guild) {
+          await interaction.reply({ content: '❌ لم يتم العثور على السيرفر.', ephemeral: true });
+          return;
+        }
+        
+        const isPremium = premiumServers.has(guildId);
+        const owner = await guild.fetchOwner().catch(() => null);
+        
+        const embed = new EmbedBuilder()
+          .setTitle(`معلومات السيرفر: ${guild.name}`)
+          .setDescription(`**🆔 ايدي السيرفر:** \`${guild.id}\`\n**👥 عدد الأعضاء:** \`${guild.memberCount} عضو\`\n**👑 المالك:** ${owner ? `<@${owner.id}>` : 'غير متوفر'}\n**⭐ حالة البريميوم:** ${isPremium ? 'مفعل' : 'غير مفعل'}`)
+          .setColor(isPremium ? '#ffd700' : '#808080')
+          .setThumbnail(guild.iconURL({ dynamic: true }))
+          .setTimestamp();
+        
+        const activateButton = new ButtonBuilder()
+          .setCustomId(`activate_premium_${guildId}`)
+          .setLabel('تفعيل البريميوم')
+          .setStyle(ButtonStyle.Success)
+          .setDisabled(isPremium);
+        
+        const deactivateButton = new ButtonBuilder()
+          .setCustomId(`deactivate_premium_${guildId}`)
+          .setLabel('إلغاء البريميوم')
+          .setStyle(ButtonStyle.Danger)
+          .setDisabled(!isPremium);
+        
+        const backButton = new ButtonBuilder()
+          .setCustomId('back_to_premium_list')
+          .setLabel('العودة للقائمة')
+          .setStyle(ButtonStyle.Secondary);
+        
+        const row = new ActionRowBuilder().addComponents(activateButton, deactivateButton, backButton);
+        
+        await interaction.update({ embeds: [embed], components: [row] });
+        return;
+      }
+    }
+
+    // معالجة أزرار البريميوم
+    if (interaction.isButton() && interaction.customId.startsWith('activate_premium_')) {
+      if (!isDeveloper(interaction.user.id)) {
+        await interaction.reply({ 
+          content: '❌ هذا الأمر مخصص فقط للمطورين المصرح لهم.', 
+          ephemeral: true 
+        });
+        return;
+      }
+      
+      const guildId = interaction.customId.replace('activate_premium_', '');
+      const guild = client.guilds.cache.get(guildId);
+      
+      if (!guild) {
+        await interaction.reply({ content: '❌ لم يتم العثور على السيرفر.', ephemeral: true });
+        return;
+      }
+      
+      // تفعيل البريميوم
+      premiumServers.add(guildId);
+      saveGuildSettings();
+      
+      const owner = await guild.fetchOwner().catch(() => null);
+      
+      // إرسال إشعار لجميع المطورين
+      for (const developerId of DEVELOPER_IDS) {
+        try {
+          const developer = await client.users.fetch(developerId);
+          if (developer) {
+            const notificationEmbed = new EmbedBuilder()
+              .setTitle('⭐ تم تفعيل البريميوم')
+              .setDescription(`**تم إعطاء بريميوم للسيرفر المحدد**`)
+              .addFields(
+                { name: '🏠 **اسم السيرفر**', value: `\`${guild.name}\``, inline: true },
+                { name: '🆔 **ايدي السيرفر**', value: `\`${guild.id}\``, inline: true },
+                { name: '👑 **أونر السيرفر**', value: owner ? `<@${owner.id}>` : 'غير متوفر', inline: true },
+                { name: '👤 **تم الإعطاء من قبل**', value: `<@${interaction.user.id}>`, inline: true },
+                { name: '⏰ **وقت التفعيل**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+              )
+              .setColor('#ffd700')
+              .setThumbnail(guild.iconURL({ dynamic: true }))
+              .setTimestamp();
+            
+            await developer.send({ embeds: [notificationEmbed] });
+          }
+        } catch (e) {
+          console.log(`❌ فشل إرسال إشعار للمطور ${developerId}:`, e.message);
+        }
+      }
+      
+      await interaction.reply({ 
+        content: `✅ تم تفعيل البريميوم بنجاح لسيرفر **${guild.name}**!\n\n📋 **التفاصيل:**\n• **السيرفر:** \`${guild.name}\`\n• **ايدي السيرفر:** \`${guild.id}\`\n• **أونر السيرفر:** ${owner ? `<@${owner.id}>` : 'غير متوفر'}\n• **تم التفعيل بواسطة:** \`${interaction.user.username}\`\n• **وقت التفعيل:** <t:${Math.floor(Date.now() / 1000)}:F>\n\n💡 **ملاحظة:** تم إرسال إشعار لجميع المطورين المصرح لهم.\n\n🎯 **فوائد البريميوم:**\n• تفعيل أمر /العسكر بشكل كامل\n• ميزات إضافية متقدمة\n• دعم أولوية من المطورين`, 
+        ephemeral: true 
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('deactivate_premium_')) {
+      if (!isDeveloper(interaction.user.id)) {
+        await interaction.reply({ 
+          content: '❌ هذا الأمر مخصص فقط للمطورين المصرح لهم.', 
+          ephemeral: true 
+        });
+        return;
+      }
+      
+      const guildId = interaction.customId.replace('deactivate_premium_', '');
+      const guild = client.guilds.cache.get(guildId);
+      
+      if (!guild) {
+        await interaction.reply({ content: '❌ لم يتم العثور على السيرفر.', ephemeral: true });
+        return;
+      }
+      
+      // إلغاء البريميوم
+      premiumServers.delete(guildId);
+      saveGuildSettings();
+      
+      const owner = await guild.fetchOwner().catch(() => null);
+      
+      // إرسال إشعار لجميع المطورين
+      for (const developerId of DEVELOPER_IDS) {
+        try {
+          const developer = await client.users.fetch(developerId);
+          if (developer) {
+            const notificationEmbed = new EmbedBuilder()
+              .setTitle('❌ تم إلغاء البريميوم')
+              .setDescription(`**تم إلغاء بريميوم من السيرفر المحدد**`)
+              .addFields(
+                { name: '🏠 **اسم السيرفر**', value: `\`${guild.name}\``, inline: true },
+                { name: '🆔 **ايدي السيرفر**', value: `\`${guild.id}\``, inline: true },
+                { name: '👑 **أونر السيرفر**', value: owner ? `<@${owner.id}>` : 'غير متوفر', inline: true },
+                { name: '👤 **تم الإلغاء من قبل**', value: `<@${interaction.user.id}>`, inline: true },
+                { name: '⏰ **وقت الإلغاء**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+              )
+              .setColor('#ff0000')
+              .setThumbnail(guild.iconURL({ dynamic: true }))
+              .setTimestamp();
+            
+            await developer.send({ embeds: [notificationEmbed] });
+          }
+        } catch (e) {
+          console.log(`❌ فشل إرسال إشعار للمطور ${developerId}:`, e.message);
+        }
+      }
+      
+      await interaction.reply({ 
+        content: `✅ تم إلغاء البريميوم بنجاح من سيرفر **${guild.name}**!\n\n📋 **التفاصيل:**\n• **السيرفر:** \`${guild.name}\`\n• **ايدي السيرفر:** \`${guild.id}\`\n• **أونر السيرفر:** ${owner ? `<@${owner.id}>` : 'غير متوفر'}\n• **تم الإلغاء بواسطة:** \`${interaction.user.username}\`\n• **وقت الإلغاء:** <t:${Math.floor(Date.now() / 1000)}:F>\n\n💡 **ملاحظة:** تم إرسال إشعار لجميع المطورين المصرح لهم.\n\n⚠️ **تحذير:** أمر /العسكر لن يعمل في هذا السيرفر بعد الآن.`, 
+        ephemeral: true 
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'back_to_premium_list') {
+      if (!isDeveloper(interaction.user.id)) {
+        await interaction.reply({ 
+          content: '❌ هذا الأمر مخصص فقط للمطورين المصرح لهم.', 
+          ephemeral: true 
+        });
+        return;
+      }
+      
+      // العودة لقائمة السيرفرات
+      const guilds = client.guilds.cache.map(g => g);
+      const page = 1;
+      const pageSize = 10;
+      const totalPages = Math.ceil(guilds.length / pageSize);
+      const start = (page - 1) * pageSize;
+      const end = start + pageSize;
+      const pageGuilds = guilds.slice(start, end);
+      
+      const options = pageGuilds.map(guild => ({
+        label: `${guild.name} ${premiumServers.has(guild.id) ? '⭐' : ''}`,
+        value: `premium_guild_${guild.id}`,
+        description: `${guild.memberCount} عضو • ${premiumServers.has(guild.id) ? 'مميز' : 'عادي'}`
+      }));
+      
+      if (totalPages > 1) {
+        options.push({ label: 'الصفحة التالية', value: `premium_page_${page + 1}` });
+      }
+      
+      const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId(`premium_guilds_page_${page}`)
+        .setPlaceholder('اختر سيرفر لإدارة البريميوم')
+        .addOptions(options);
+      
+      const row = new ActionRowBuilder().addComponents(selectMenu);
+      
+      const embed = new EmbedBuilder()
+        .setTitle('إدارة البريميوم')
+        .setDescription(`**إجمالي السيرفرات:** ${guilds.length}\n**السيرفرات المميزة:** ${premiumServers.size}\n**السيرفرات العادية:** ${guilds.length - premiumServers.size}`)
+        .setColor('#ffd700')
+        .setTimestamp();
+      
+      await interaction.update({ embeds: [embed], components: [row] });
       return;
     }
 
@@ -6168,7 +6915,8 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       // قائمة منسدلة بخيارات المطور
       const menuOptions = [
         { label: 'تغيير ايمبيد', value: 'change_embed', description: 'تغيير صورة الإمبد لجميع الأوامر في السيرفرات' },
-        { label: 'إيقاف | تشغيل البوت', value: 'toggle_bot_status', description: 'إدارة حالة البوت في جميع السيرفرات' }
+        { label: 'إيقاف | تشغيل البوت', value: 'toggle_bot_status', description: 'إدارة حالة البوت في جميع السيرفرات' },
+        { label: 'البريميوم', value: 'premium_management', description: 'إدارة السيرفرات المميزة' }
       ];
       const devMenu = new StringSelectMenuBuilder()
         .setCustomId('dev_menu')
@@ -6469,7 +7217,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       const guildId = interaction.customId.replace('dev_reset_embed_', '');
       if (guildSettings[guildId] && guildSettings[guildId].customEmbedImage) {
         delete guildSettings[guildId].customEmbedImage;
-        saveAllData();
+        await saveAllData();
         
         // جلب اسم السيرفر للرسالة
         const guild = client.guilds.cache.get(guildId);
@@ -6508,7 +7256,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       
       // حذف الطلب من القائمة المعلقة
       pendingMilitaryCodeRequests = pendingMilitaryCodeRequests.filter(req => req.requestId !== requestId);
-      saveAllData();
+      await saveAllData();
       
       // إرسال لوق في روم اللوق
       const logChannelId = guildSettings[guildId]?.logChannelId;
@@ -6798,7 +7546,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         if (militaryUsers[userId]) {
           militaryUsers[userId].code = newCode;
           militaryUsers[userId].lastUpdate = new Date().toISOString();
-          saveAllData();
+          await saveAllData();
         }
         
         // تحديث الصورة في روم مباشرة العسكر
@@ -6946,7 +7694,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         // التأكد من حفظ الرتبة العسكرية
         if (militaryUsers[userId]) {
           militaryUsers[userId].rank = newRank;
-          saveAllData();
+          await saveAllData();
         }
         
         // تحديث الصورة في روم مباشرة العسكر
@@ -7604,6 +8352,114 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         
       } catch (e) {
         await interaction.reply({ content: '❌ خطأ في حذف التحذير.', ephemeral: true });
+      }
+      return;
+    }
+
+    // معالجة أمر /مسح_الطلبات
+    if (interaction.isChatInputCommand() && interaction.commandName === 'مسح_الطلبات') {
+      // تحقق من صلاحية الأدمن
+      if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        await interaction.reply({ content: '❌ هذا الأمر مخصص فقط للأدمن.', ephemeral: true });
+        return;
+      }
+      
+      // حذف جميع الطلبات المعلقة
+      const deletedCount = pendingRequests.length;
+      pendingRequests.length = 0;
+      await saveAllData();
+      
+      await interaction.reply({ 
+        content: `✅ تم حذف **${deletedCount}** طلب معلق بنجاح!`, 
+        ephemeral: true 
+      });
+      return;
+    }
+
+    // معالجة أمر /backup (النسخ الاحتياطي)
+    if (interaction.isChatInputCommand() && interaction.commandName === 'backup') {
+      if (!DEVELOPER_IDS.includes(interaction.user.id)) {
+        await interaction.reply({ content: '❌ هذا الأمر للمطورين فقط!', ephemeral: true });
+        return;
+      }
+      
+      await interaction.deferReply({ ephemeral: true });
+      
+      const success = await createBackup();
+      if (success) {
+        await interaction.editReply({ content: '✅ تم إنشاء نسخة احتياطية بنجاح!' });
+      } else {
+        await interaction.editReply({ content: '❌ فشل في إنشاء النسخة الاحتياطية!' });
+      }
+      return;
+    }
+
+    // معالجة أمر /restore (استرداد البيانات)
+    if (interaction.isChatInputCommand() && interaction.commandName === 'restore') {
+      if (!DEVELOPER_IDS.includes(interaction.user.id)) {
+        await interaction.reply({ content: '❌ هذا الأمر للمطورين فقط!', ephemeral: true });
+        return;
+      }
+      
+      const backupId = interaction.options.getString('backup_id');
+      if (!backupId) {
+        await interaction.reply({ content: '❌ يرجى تحديد معرف النسخة الاحتياطية!', ephemeral: true });
+        return;
+      }
+      
+      await interaction.deferReply({ ephemeral: true });
+      
+      const success = await restoreFromBackup(backupId);
+      if (success) {
+        await interaction.editReply({ content: '✅ تم استرداد البيانات من النسخة الاحتياطية بنجاح!' });
+      } else {
+        await interaction.editReply({ content: '❌ فشل في استرداد البيانات! تأكد من صحة معرف النسخة الاحتياطية.' });
+      }
+      return;
+    }
+
+    // معالجة أمر /db_stats (إحصائيات قاعدة البيانات)
+    if (interaction.isChatInputCommand() && interaction.commandName === 'db_stats') {
+      if (!DEVELOPER_IDS.includes(interaction.user.id)) {
+        await interaction.reply({ content: '❌ هذا الأمر للمطورين فقط!', ephemeral: true });
+        return;
+      }
+      
+      await interaction.deferReply({ ephemeral: true });
+      
+      const stats = await checkDatabaseSize();
+      if (stats) {
+        const embed = new EmbedBuilder()
+          .setTitle('📊 إحصائيات قاعدة البيانات')
+          .addFields(
+            { name: 'حجم قاعدة البيانات', value: `${stats.sizeInMB.toFixed(2)} MB`, inline: true },
+            { name: 'الحد الأقصى', value: `${stats.maxSize} MB`, inline: true },
+            { name: 'النسبة المئوية', value: `${stats.percentage.toFixed(2)}%`, inline: true }
+          )
+          .setColor(stats.percentage > 80 ? '#ff0000' : stats.percentage > 60 ? '#ffaa00' : '#00ff00')
+          .setTimestamp();
+        
+        await interaction.editReply({ embeds: [embed] });
+      } else {
+        await interaction.editReply({ content: '❌ فشل في جلب إحصائيات قاعدة البيانات!' });
+      }
+      return;
+    }
+
+    // معالجة أمر /cleanup (تنظيف البيانات)
+    if (interaction.isChatInputCommand() && interaction.commandName === 'cleanup') {
+      if (!DEVELOPER_IDS.includes(interaction.user.id)) {
+        await interaction.reply({ content: '❌ هذا الأمر للمطورين فقط!', ephemeral: true });
+        return;
+      }
+      
+      await interaction.deferReply({ ephemeral: true });
+      
+      try {
+        await cleanupOldData();
+        await interaction.editReply({ content: '✅ تم تنظيف البيانات القديمة بنجاح!' });
+      } catch (error) {
+        await interaction.editReply({ content: '❌ فشل في تنظيف البيانات!' });
       }
       return;
     }
