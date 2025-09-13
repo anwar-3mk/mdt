@@ -312,11 +312,9 @@ identities.forEach(identity => {
   }
 });
 if (updated) {
-  try {
-    await saveAllData();
-  } catch (error) {
+  saveAllData().catch(error => {
     console.error('❌ خطأ في حفظ البيانات:', error);
-  }
+  });
 }
 
 function saveGuildSettings() {
