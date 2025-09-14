@@ -1788,6 +1788,13 @@ client.on('interactionCreate', async interaction => {
 
     // معالجة قبول/رفض الكود العسكري
     if (interaction.isButton() && interaction.customId.startsWith('approve_military_code_')) {
+      // التحقق من رتبة مسؤول الشرطة
+      const policeAdminRoleId = guildSettings[interaction.guildId]?.policeAdminRoleId;
+      if (!policeAdminRoleId || !interaction.member.roles.cache.has(policeAdminRoleId)) {
+        await interaction.reply({ content: '❌ ليس لديك صلاحية قبول الأكواد العسكرية. يجب أن تحمل رتبة مسؤول الشرطة.', ephemeral: true });
+        return;
+      }
+      
       const userId = interaction.customId.replace('approve_military_code_', '');
       const requestIndex = pendingMilitaryCodeRequests.findIndex(req => req.userId === userId && req.guildId === interaction.guildId);
       
@@ -1796,31 +1803,32 @@ client.on('interactionCreate', async interaction => {
         return;
       }
       
-      const request = pendingMilitaryCodeRequests[requestIndex];
-      setMilitaryCode(userId, interaction.guildId, request.code);
-      pendingMilitaryCodeRequests.splice(requestIndex, 1);
-      saveAllData();
+      // عرض مودال لكتابة سبب القبول
+      const modal = new ModalBuilder()
+        .setCustomId(`approve_military_code_modal_${userId}`)
+        .setTitle('سبب قبول الكود العسكري');
       
-      const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
-      if (logChannelId) {
-        try {
-          const logChannel = interaction.guild.channels.cache.get(logChannelId);
-          if (logChannel) {
-            const logEmbed = new EmbedBuilder()
-              .setTitle('✅ تم قبول الكود العسكري')
-              .setDescription(`**المستخدم:** <@${userId}>\n**الاسم:** ${request.fullName}\n**الكود:** ${request.code}\n**تم القبول من قبل:** <@${interaction.user.id}>`)
-              .setColor('#00ff00')
-              .setTimestamp();
-            await logChannel.send({ embeds: [logEmbed] });
-          }
-        } catch (e) { /* تجاهل الخطأ */ }
-      }
+      const reasonInput = new TextInputBuilder()
+        .setCustomId('approve_reason')
+        .setLabel('سبب القبول')
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder('اكتب سبب قبول الكود العسكري هنا...')
+        .setRequired(true);
       
-      await interaction.reply({ content: '✅ تم قبول الكود العسكري بنجاح!', ephemeral: true });
+      const modalRow = new ActionRowBuilder().addComponents(reasonInput);
+      modal.addComponents(modalRow);
+      await interaction.showModal(modal);
       return;
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('reject_military_code_')) {
+      // التحقق من رتبة مسؤول الشرطة
+      const policeAdminRoleId = guildSettings[interaction.guildId]?.policeAdminRoleId;
+      if (!policeAdminRoleId || !interaction.member.roles.cache.has(policeAdminRoleId)) {
+        await interaction.reply({ content: '❌ ليس لديك صلاحية رفض الأكواد العسكرية. يجب أن تحمل رتبة مسؤول الشرطة.', ephemeral: true });
+        return;
+      }
+      
       const userId = interaction.customId.replace('reject_military_code_', '');
       const requestIndex = pendingMilitaryCodeRequests.findIndex(req => req.userId === userId && req.guildId === interaction.guildId);
       
@@ -1829,26 +1837,21 @@ client.on('interactionCreate', async interaction => {
         return;
       }
       
-      const request = pendingMilitaryCodeRequests[requestIndex];
-      pendingMilitaryCodeRequests.splice(requestIndex, 1);
-      saveAllData();
+      // عرض مودال لكتابة سبب الرفض
+      const modal = new ModalBuilder()
+        .setCustomId(`reject_military_code_modal_${userId}`)
+        .setTitle('سبب رفض الكود العسكري');
       
-      const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
-      if (logChannelId) {
-        try {
-          const logChannel = interaction.guild.channels.cache.get(logChannelId);
-          if (logChannel) {
-            const logEmbed = new EmbedBuilder()
-              .setTitle('❌ تم رفض الكود العسكري')
-              .setDescription(`**المستخدم:** <@${userId}>\n**الاسم:** ${request.fullName}\n**الكود:** ${request.code}\n**تم الرفض من قبل:** <@${interaction.user.id}>`)
-              .setColor('#ff0000')
-              .setTimestamp();
-            await logChannel.send({ embeds: [logEmbed] });
-          }
-        } catch (e) { /* تجاهل الخطأ */ }
-      }
+      const reasonInput = new TextInputBuilder()
+        .setCustomId('reject_reason')
+        .setLabel('سبب الرفض')
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder('اكتب سبب رفض الكود العسكري هنا...')
+        .setRequired(true);
       
-      await interaction.reply({ content: '❌ تم رفض الكود العسكري.', ephemeral: true });
+      const modalRow = new ActionRowBuilder().addComponents(reasonInput);
+      modal.addComponents(modalRow);
+      await interaction.showModal(modal);
       return;
     }
 
@@ -2192,6 +2195,153 @@ client.on('interactionCreate', async interaction => {
       }
       
       await interaction.reply({ content: '✅ تم إرسال طلب الكود العسكري بنجاح! سيتم مراجعته من قبل مسؤولي الشرطة.', ephemeral: true });
+      return;
+    }
+
+    // معالج مودال قبول الكود العسكري
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('approve_military_code_modal_')) {
+      const userId = interaction.customId.replace('approve_military_code_modal_', '');
+      const reason = interaction.fields.getTextInputValue('approve_reason');
+      const requestIndex = pendingMilitaryCodeRequests.findIndex(req => req.userId === userId && req.guildId === interaction.guildId);
+      
+      if (requestIndex === -1) {
+        await interaction.reply({ content: '❌ لم يتم العثور على طلب الكود.', ephemeral: true });
+        return;
+      }
+      
+      const request = pendingMilitaryCodeRequests[requestIndex];
+      setMilitaryCode(userId, interaction.guildId, request.code);
+      pendingMilitaryCodeRequests.splice(requestIndex, 1);
+      saveAllData();
+      
+      // تحديث الإيمبيد الأصلي في روم المراجعة
+      const reviewRoomId = guildSettings[interaction.guildId]?.militaryCodeReviewRoomId;
+      if (reviewRoomId) {
+        try {
+          const reviewChannel = interaction.guild.channels.cache.get(reviewRoomId);
+          if (reviewChannel) {
+            // البحث عن الرسالة الأصلية وتحديثها
+            const messages = await reviewChannel.messages.fetch({ limit: 50 });
+            const originalMessage = messages.find(msg => 
+              msg.embeds.length > 0 && 
+              msg.embeds[0].title?.includes('طلب كود عسكري جديد') &&
+              msg.embeds[0].description?.includes(requestId)
+            );
+            
+            if (originalMessage) {
+              const updatedEmbed = new EmbedBuilder()
+                .setTitle('تم قبول الكود العسكري')
+                .setDescription(`**المستخدم:** ${interaction.user} (${request.username})\n**الاسم:** ${request.fullName}\n**الكود:** \`${request.code}\`\n**وقت الطلب:** <t:${Math.floor(Date.now() / 1000)}:F>\n**معرف الطلب:** ${request.requestId}\n\n**تم القبول من قبل:** ${interaction.user}\n**سبب القبول:** ${reason}`)
+                .setColor('#00ff00')
+                .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
+                .setTimestamp();
+              
+              await originalMessage.edit({ embeds: [updatedEmbed], components: [] });
+            }
+          }
+        } catch (e) { /* تجاهل الخطأ */ }
+      }
+      
+      const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
+      if (logChannelId) {
+        try {
+          const logChannel = interaction.guild.channels.cache.get(logChannelId);
+          if (logChannel) {
+            const logEmbed = new EmbedBuilder()
+              .setTitle('تم قبول الكود العسكري')
+              .setDescription(`**المستخدم:** <@${userId}>\n**الاسم:** ${request.fullName}\n**الكود:** ${request.code}\n**سبب القبول:** ${reason}\n**تم القبول من قبل:** <@${interaction.user.id}>`)
+              .setColor('#00ff00')
+              .setTimestamp();
+            await logChannel.send({ embeds: [logEmbed] });
+          }
+        } catch (e) { /* تجاهل الخطأ */ }
+      }
+      
+      // إرسال رسالة خاصة للعسكري
+      try {
+        const user = await client.users.fetch(userId);
+        const dmEmbed = new EmbedBuilder()
+          .setTitle('تم قبول الكود العسكري')
+          .setDescription(`مرحباً ${user.username}!\n\nتم قبول طلب الكود العسكري الخاص بك بنجاح.\n\n**الكود:** \`${request.code}\`\n**تم القبول من قبل:** ${interaction.user}\n**سبب القبول:** ${reason}`)
+          .setColor('#00ff00')
+          .setTimestamp();
+        await user.send({ embeds: [dmEmbed] });
+      } catch (err) { /* تجاهل الخطأ */ }
+      
+      await interaction.reply({ content: 'تم قبول الكود العسكري بنجاح!', ephemeral: true });
+      return;
+    }
+
+    // معالج مودال رفض الكود العسكري
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('reject_military_code_modal_')) {
+      const userId = interaction.customId.replace('reject_military_code_modal_', '');
+      const reason = interaction.fields.getTextInputValue('reject_reason');
+      const requestIndex = pendingMilitaryCodeRequests.findIndex(req => req.userId === userId && req.guildId === interaction.guildId);
+      
+      if (requestIndex === -1) {
+        await interaction.reply({ content: '❌ لم يتم العثور على طلب الكود.', ephemeral: true });
+        return;
+      }
+      
+      const request = pendingMilitaryCodeRequests[requestIndex];
+      pendingMilitaryCodeRequests.splice(requestIndex, 1);
+      saveAllData();
+      
+      // تحديث الإيمبيد الأصلي في روم المراجعة
+      const reviewRoomId = guildSettings[interaction.guildId]?.militaryCodeReviewRoomId;
+      if (reviewRoomId) {
+        try {
+          const reviewChannel = interaction.guild.channels.cache.get(reviewRoomId);
+          if (reviewChannel) {
+            // البحث عن الرسالة الأصلية وتحديثها
+            const messages = await reviewChannel.messages.fetch({ limit: 50 });
+            const originalMessage = messages.find(msg => 
+              msg.embeds.length > 0 && 
+              msg.embeds[0].title?.includes('طلب كود عسكري جديد') &&
+              msg.embeds[0].description?.includes(request.requestId)
+            );
+            
+            if (originalMessage) {
+              const updatedEmbed = new EmbedBuilder()
+                .setTitle('تم رفض الكود العسكري')
+                .setDescription(`**المستخدم:** ${interaction.user} (${request.username})\n**الاسم:** ${request.fullName}\n**الكود:** \`${request.code}\`\n**وقت الطلب:** <t:${Math.floor(Date.now() / 1000)}:F>\n**معرف الطلب:** ${request.requestId}\n\n**تم الرفض من قبل:** ${interaction.user}\n**سبب الرفض:** ${reason}`)
+                .setColor('#ff0000')
+                .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
+                .setTimestamp();
+              
+              await originalMessage.edit({ embeds: [updatedEmbed], components: [] });
+            }
+          }
+        } catch (e) { /* تجاهل الخطأ */ }
+      }
+      
+      const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
+      if (logChannelId) {
+        try {
+          const logChannel = interaction.guild.channels.cache.get(logChannelId);
+          if (logChannel) {
+            const logEmbed = new EmbedBuilder()
+              .setTitle('تم رفض الكود العسكري')
+              .setDescription(`**المستخدم:** <@${userId}>\n**الاسم:** ${request.fullName}\n**الكود:** ${request.code}\n**سبب الرفض:** ${reason}\n**تم الرفض من قبل:** <@${interaction.user.id}>`)
+              .setColor('#ff0000')
+              .setTimestamp();
+            await logChannel.send({ embeds: [logEmbed] });
+          }
+        } catch (e) { /* تجاهل الخطأ */ }
+      }
+      
+      // إرسال رسالة خاصة للعسكري
+      try {
+        const user = await client.users.fetch(userId);
+        const dmEmbed = new EmbedBuilder()
+          .setTitle('تم رفض الكود العسكري')
+          .setDescription(`مرحباً ${user.username}!\n\nتم رفض طلب الكود العسكري الخاص بك.\n\n**الكود:** \`${request.code}\`\n**تم الرفض من قبل:** ${interaction.user}\n**سبب الرفض:** ${reason}\n\nيمكنك تقديم طلب كود عسكري جديد مرة أخرى.`)
+          .setColor('#ff0000')
+          .setTimestamp();
+        await user.send({ embeds: [dmEmbed] });
+      } catch (err) { /* تجاهل الخطأ */ }
+      
+      await interaction.reply({ content: 'تم رفض الكود العسكري بنجاح!', ephemeral: true });
       return;
     }
 
