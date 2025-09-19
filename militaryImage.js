@@ -11,16 +11,16 @@ async function generateMilitaryPageImage(users, counters) {
   // إعدادات الصورة
   const width = 1200;
   const height = 700;
-  const rowHeight = 48;
+  const rowHeight = 52;
   const tableTop = 170;
   const leftPad = 60;
   // توزيع الأعمدة: الحالة | الكود | الرتبة | الاسم (الاسم أكبر)
-  const colWidths = [100, 170, 170, 600];
+  const colWidths = [120, 200, 200, 580];
   const headerBg = '#1e293b';
   const tableBg = '#f1f5f9';
   const borderColor = '#64748b';
-  const font = 'bold 26px Cairo, Arial';
-  const fontSmall = '22px Cairo, Arial';
+  const font = 'bold 26px "Segoe UI", "Arial Unicode MS", Arial, sans-serif';
+  const fontSmall = '22px "Segoe UI", "Arial Unicode MS", Arial, sans-serif';
 
   // الألوان للحالات
   const statusColors = {
@@ -44,7 +44,7 @@ async function generateMilitaryPageImage(users, counters) {
   ctx.arc(110, 70, 40, 0, 2 * Math.PI);
   ctx.fillStyle = statusColors.in;
   ctx.fill();
-  ctx.font = 'bold 32px Cairo, Arial';
+  ctx.font = 'bold 32px "Segoe UI", "Arial Unicode MS", Arial, sans-serif';
   ctx.fillStyle = '#fff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -56,7 +56,7 @@ async function generateMilitaryPageImage(users, counters) {
   ctx.arc(220, 70, 40, 0, 2 * Math.PI);
   ctx.fillStyle = statusColors.out;
   ctx.fill();
-  ctx.font = 'bold 32px Cairo, Arial';
+  ctx.font = 'bold 32px "Segoe UI", "Arial Unicode MS", Arial, sans-serif';
   ctx.fillStyle = '#fff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -68,7 +68,7 @@ async function generateMilitaryPageImage(users, counters) {
   ctx.arc(330, 70, 40, 0, 2 * Math.PI);
   ctx.fillStyle = statusColors.ended;
   ctx.fill();
-  ctx.font = 'bold 32px Cairo, Arial';
+  ctx.font = 'bold 32px "Segoe UI", "Arial Unicode MS", Arial, sans-serif';
   ctx.fillStyle = '#fff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -76,7 +76,7 @@ async function generateMilitaryPageImage(users, counters) {
   ctx.restore();
 
   // --- عنوان الجدول ---
-  ctx.font = 'bold 38px Cairo, Arial';
+  ctx.font = 'bold 38px "Segoe UI", "Arial Unicode MS", Arial, sans-serif';
   ctx.fillStyle = '#0f172a';
   ctx.textAlign = 'right';
   ctx.fillText('جدول مباشرة العسكر', width - 60, 60);
@@ -102,7 +102,8 @@ async function generateMilitaryPageImage(users, counters) {
   x += colWidths[2];
   // الاسم (محاذاة أقصى اليمين)
   ctx.textAlign = 'right';
-  ctx.fillText('الاسم', x + colWidths[3] - 16, tableTop + rowHeight / 2);
+  // إزاحة بسيطة جهة اليسار لعنوان الاسم
+  ctx.fillText('الاسم', x + colWidths[3] - 32, tableTop + rowHeight / 2);
 
   // --- صفوف العسكريين ---
   for (let i = 0; i < 10; i++) {
@@ -132,7 +133,8 @@ async function generateMilitaryPageImage(users, counters) {
       x += colWidths[2];
       // الاسم
       ctx.textAlign = 'right';
-      ctx.fillText(user.fullName || '-', x + colWidths[3] - 16, y + rowHeight / 2);
+      // إزاحة بسيطة جهة اليسار لاسم الشخص
+      ctx.fillText(user.fullName || '-', x + colWidths[3] - 32, y + rowHeight / 2);
     }
   }
 
