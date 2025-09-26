@@ -3,9 +3,35 @@ const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, Permission
 const config = require('./config');
 const fs = require('fs');
 const path = require('path');
-const DATA_FILE = path.join(__dirname, 'data.json');
+// دعم مسار قابل للتهيئة لتخزين دائم عبر متغير بيئة DATA_DIR (مثلاً مسار قرص دائم في Render)
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+// إنشاء المجلد إذا لم يكن موجودًا
+try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (_) {}
+const DATA_FILE = path.join(DATA_DIR, 'data.json');
+// ترحيل تلقائي: إذا لم يوجد الملف في القرص الدائم وكان موجودًا بجانب التطبيق، انسخه مرة واحدة
+try {
+  const DEFAULT_DATA_FILE = path.join(__dirname, 'data.json');
+  if (!fs.existsSync(DATA_FILE) && fs.existsSync(DEFAULT_DATA_FILE)) {
+    fs.copyFileSync(DEFAULT_DATA_FILE, DATA_FILE);
+  }
+} catch (_) {}
 const { createCanvas, loadImage } = require('canvas');
+// كاش بسيط للصور لتقليل التحميل المتكرر
+let cachedTemplateImage = null;
+const avatarCache = new Map(); // key: url, value: { img, at }
+const AVATAR_CACHE_TTL_MS = 30 * 1000; // 30 ثانية
 const { generateMilitaryPageImage } = require('./militaryImage');
+
+// --- MongoDB (Mongoose) persistence ---
+let mongoose = null;
+let State = null;
+try {
+  mongoose = require('mongoose');
+  const stateSchema = new mongoose.Schema({ key: { type: String, unique: true } }, { strict: false });
+  State = mongoose.models.MDTState || mongoose.model('MDTState', stateSchema);
+} catch (_) {
+  // mongoose غير مثبت في بيئة التطوير المحلية أو لم يتم تثبيته بعد
+}
 
 // تحميل بيانات الهويات من الملف عند بدء التشغيل
 let identities = [];
@@ -47,7 +73,36 @@ const DEVELOPER_IDS = [
 let guildSettings = {};
 
 try {
-  if (fs.existsSync(DATA_FILE)) {
+  // إذا توفر Mongo، حمّل الحالة منه أولًا
+  let mongoLoaded = false;
+  if (mongoose && process.env.MONGODB_URI) {
+    try {
+      await (async () => {
+        if (mongoose.connection.readyState === 0) {
+          await mongoose.connect(process.env.MONGODB_URI, { dbName: process.env.MONGODB_DB || undefined });
+        }
+        const doc = await State.findOne({ key: 'mdt' }).lean();
+        if (doc) {
+          identities = doc.identities || [];
+          pendingRequests = doc.pendingRequests || [];
+          botStatus = doc.botStatus || 'online';
+          originalBotName = doc.originalBotName || '';
+          militaryData = doc.militaryData || { users: {}, codes: {}, points: {} };
+          pendingMilitaryCodeRequests = doc.pendingMilitaryCodeRequests || [];
+          militaryActivePages = doc.militaryActivePages || [];
+          militaryUsers = doc.militaryUsers || {};
+          militaryWarnings = doc.militaryWarnings || {};
+          guildSettings = doc.guildSettings || {};
+          premiumServers = new Set(doc.premiumServers || []);
+          mongoLoaded = true;
+        }
+      })();
+    } catch (_) {
+      // إذا فشل التحميل من مونغو نرجع للملف
+    }
+  }
+
+  if (!mongoLoaded && fs.existsSync(DATA_FILE)) {
     const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     identities = data.identities || [];
     pendingRequests = data.pendingRequests || [];
@@ -79,7 +134,9 @@ try {
 
 // دالة حفظ موحدة لكل البيانات
 function saveAllData() {
-  fs.writeFileSync(DATA_FILE, JSON.stringify({
+  // حفظ ذري لمنع تلف الملف عند الإنهاء المفاجئ
+  const tmpFile = DATA_FILE + '.tmp';
+  fs.writeFileSync(tmpFile, JSON.stringify({
     identities,
     pendingRequests,
     guildSettings,
@@ -91,6 +148,25 @@ function saveAllData() {
     militaryUsers,
     militaryWarnings
   }, null, 2), 'utf8');
+  fs.renameSync(tmpFile, DATA_FILE);
+  // حفظ غير متزامن إلى Mongo (إن وُجد)
+  if (mongoose && mongoose.connection && mongoose.connection.readyState === 1) {
+    const data = {
+      key: 'mdt',
+      identities,
+      pendingRequests,
+      guildSettings,
+      botStatus,
+      originalBotName,
+      militaryData,
+      pendingMilitaryCodeRequests,
+      militaryActivePages,
+      militaryUsers,
+      militaryWarnings,
+      premiumServers: Array.from(premiumServers)
+    };
+    State.updateOne({ key: 'mdt' }, data, { upsert: true }).catch(() => {});
+  }
 }
 
 // دالة إضافة خيار إعادة تعيين للقوائم المنسدلة
@@ -162,6 +238,8 @@ async function processIdentityRequest(interaction, data) {
       return;
     }
 
+    // (تمت إزالة أزرار ومودال صورة البطاقة الرسمية)
+
     // جلب السيرفر الصحيح
     const guild = client.guilds.cache.get(interaction.guildId) || await client.guilds.fetch(interaction.guildId).catch(() => null);
     if (!guild) {
@@ -183,27 +261,32 @@ async function processIdentityRequest(interaction, data) {
     const cardHeight = 400;
     const canvas = createCanvas(cardWidth, cardHeight);
     const ctx = canvas.getContext('2d');
-
-    ctx.fillStyle = '#f5f5f5';
-    ctx.fillRect(0, 0, cardWidth, cardHeight);
-
-    ctx.fillStyle = '#1e3a8a';
-    ctx.fillRect(0, 0, cardWidth, 60);
-
-    ctx.fillStyle = '#1e3a8a';
-    ctx.fillRect(0, cardHeight - 50, cardWidth, 50);
-
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 24px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('بطاقة الهوية الرسمية', cardWidth / 2, 35);
+    // استخدم قالب صورة البطاقة كخلفية مع كاش
+    try {
+      if (!cachedTemplateImage) {
+        cachedTemplateImage = await loadImage('2.png');
+      }
+      ctx.drawImage(cachedTemplateImage, 0, 0, cardWidth, cardHeight);
+    } catch (_) {
+      // في حال فشل تحميل القالب، اترك الخلفية فارغة بدون عناوين/أشرطة
+      ctx.clearRect(0, 0, cardWidth, cardHeight);
+    }
 
     const avatarURL = interaction.user.displayAvatarURL({ extension: 'png', size: 256 });
     let avatar = null;
-    try { avatar = await loadImage(avatarURL); } catch (_) { avatar = null; }
-    const avatarSize = 120;
-    const avatarX = 50;
-    const avatarY = 80;
+    try {
+      const cached = avatarCache.get(avatarURL);
+      const now = Date.now();
+      if (cached && now - cached.at < AVATAR_CACHE_TTL_MS) {
+        avatar = cached.img;
+      } else {
+        avatar = await loadImage(avatarURL);
+        avatarCache.set(avatarURL, { img: avatar, at: now });
+      }
+    } catch (_) { avatar = null; }
+    const avatarSize = 150;
+    const avatarX = 70;
+    const avatarY = 140;
 
     ctx.fillStyle = '#e5e7eb';
     ctx.beginPath();
@@ -230,46 +313,33 @@ async function processIdentityRequest(interaction, data) {
       'paleto': 'بوليتو'
     };
 
-    ctx.fillStyle = '#1f2937';
-    ctx.font = 'bold 16px Arial';
+    ctx.fillStyle = '#000000';
     ctx.textAlign = 'right';
-    const labels = [
-      { text: 'الاسم الكامل', y: 100 },
-      { text: 'المدينة', y: 140 },
-      { text: 'تاريخ الميلاد', y: 180 },
-      { text: 'الجنسية', y: 220 },
-      { text: 'رقم الهوية', y: 260 }
-    ];
-    labels.forEach(label => { ctx.fillText(label.text, 280, label.y); });
-
-    ctx.textAlign = 'left';
-    ctx.font = '16px Arial';
-    ctx.fillText(data.fullName, 300, 100);
+    ctx.font = '24px Arial';
+    ctx.fillText(data.fullName, 475, 162);
     const city = cityNames[data.city] || data.city;
-    ctx.fillText(city, 300, 140);
+    ctx.font = '24px Arial';
+    ctx.fillText(city, 475, 210);
     const birthTextAr = `${data.day} / ${monthNames[data.month]} / ${data.year}`;
-    ctx.fillText(birthTextAr, 300, 180);
-    const genderText = data.gender === 'male' ? 'ذكر' : 'أنثى';
-    ctx.fillText(genderText, 300, 220);
-    ctx.fillText(nationalId, 300, 260);
-
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '16px Arial';
     ctx.textAlign = 'right';
-    ctx.fillText('تاريخ الإصدار :', cardWidth - 20, cardHeight - 20);
+    ctx.font = '24px Arial';
+    ctx.fillText(birthTextAr, 417, 250);
+    const genderText = data.gender === 'male' ? 'ذكر' : 'أنثى';
+    ctx.fillStyle = '#000000';
+    ctx.font = '26px Arial';
+    ctx.fillText(genderText, 462, 306);
+    // رقم الهوية أسفل اليسار
     ctx.textAlign = 'left';
-    ctx.fillText(birthTextAr, 20, cardHeight - 20);
+    ctx.fillText(nationalId, 87, cardHeight - 50);
 
-    ctx.fillStyle = '#fbbf24';
-    ctx.beginPath();
-    ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#1e3a8a';
-    ctx.font = 'bold 14px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('MDT', 50, cardHeight - 75);
+    // عرض التاريخ النهائي بلون أسود وبحجم 24px، بمحاذاة يمين
+    // نفس إحداثيات تاريخ الميلاد ولكن منزّل قليلًا ومُزاح يمينًا
+    ctx.fillStyle = '#000000';
+    ctx.font = '24px Arial';
+    ctx.textAlign = 'right';
+    ctx.fillText(birthTextAr, 445, 345);
 
-    const buffer = canvas.toBuffer('image/png');
+    const buffer = canvas.toBuffer('image/png', { compressionLevel: 9 });
 
     // إنشاء الطلب
     const requestId = Date.now().toString();
@@ -541,7 +611,7 @@ function updateMilitaryUserStatus(userId, guildId, status) {
     militaryUsers[userId] = {
       fullName: identity?.fullName || fallbackName,
       code: getMilitaryCode(userId, guildId) || 'غير محدد',
-      rank: 'عسكري',
+      rank: 'مستجد',
       status: status,
       lastUpdate: new Date().toISOString(),
       guildId: guildId
@@ -553,7 +623,7 @@ function updateMilitaryUserStatus(userId, guildId, status) {
     
     // التأكد من وجود الرتبة العسكرية
     if (!militaryUsers[userId].rank) {
-      militaryUsers[userId].rank = 'عسكري';
+      militaryUsers[userId].rank = 'مستجد';
     }
   }
   
@@ -584,7 +654,7 @@ async function updateMilitaryPageImage(guildId) {
     };
     
                         // تقسيم العسكريين إلى صفحات (10 عسكري لكل صفحة)
-                    const pageSize = 10;
+                    const pageSize = 23;
     const pages = [];
     for (let i = 0; i < activeUsers.length; i += pageSize) {
       pages.push(activeUsers.slice(i, i + pageSize));
@@ -661,7 +731,7 @@ function addOrUpdateMilitaryUser(userId, guildId, data) {
     militaryUsers[userId] = {
       fullName: data.fullName,
       code: data.code || getMilitaryCode(userId, guildId) || 'غير محدد',
-      rank: data.rank || 'عسكري',
+      rank: data.rank || 'مستجد',
       status: data.status || 'in',
       lastUpdate: new Date().toISOString(),
       guildId: guildId
@@ -675,7 +745,7 @@ function addOrUpdateMilitaryUser(userId, guildId, data) {
     
     // التأكد من وجود الرتبة العسكرية
     if (!militaryUsers[userId].rank) {
-      militaryUsers[userId].rank = 'عسكري';
+      militaryUsers[userId].rank = 'مستجد';
     }
   }
   
@@ -708,6 +778,24 @@ process.on('uncaughtException', (error) => {
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// حفظ البيانات عند إيقاف الخدمة (ريستارت/إغلاق)
+function gracefulShutdown(signal) {
+  try {
+    console.log(`⚠️ Received ${signal}. Saving data before exit...`);
+    saveAllData();
+  } catch (e) {
+    console.error('❌ Error while saving data on shutdown:', e);
+  } finally {
+    process.exit(0);
+  }
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('beforeExit', () => {
+  try { saveAllData(); } catch (_) {}
 });
 
 const client = new Client({
@@ -1486,7 +1574,7 @@ client.on('interactionCreate', async interaction => {
       const selectMenu = new StringSelectMenuBuilder()
         .setCustomId('select_warning_evidence_to_remove')
         .setPlaceholder('اختر التحذير الذي تريد حذف دليله')
-        .addOptions(warnings.map(w => ({
+        .addOptions(warnings.slice(0, 23).map(w => ({
           label: `تحذير رقم ${w.warningNumber} - ${w.id}`,
           value: w.id,
           description: w.reason.slice(0, 50)
@@ -1692,7 +1780,7 @@ client.on('interactionCreate', async interaction => {
         if (selected === 'edit_delete_identity') {
           // عرض قائمة الهويات للتعديل/الحذف
           const page = 1;
-          const perPage = 25;
+          const perPage = 23; // 23 خيار + خيار رؤية المزيد = 24 خيار (آمن)
           const guildIdentities = identities.filter(id => id.guildId === interaction.guildId);
           const totalPages = Math.ceil(guildIdentities.length / perPage);
           const pageIdentities = guildIdentities.slice((page-1)*perPage, page*perPage);
@@ -1708,7 +1796,7 @@ client.on('interactionCreate', async interaction => {
           }));
           
           if (totalPages > 1) {
-            options.push({ label: 'رؤية المزيد', value: `identity_more_${page+1}` });
+            options.push({ label: 'رؤية المزيد', value: 'see_more_identities' });
           }
           
           const selectMenu = new StringSelectMenuBuilder()
@@ -1740,7 +1828,7 @@ client.on('interactionCreate', async interaction => {
             .setDescription(`عدد الأكواد المعلقة: ${pendingCodes.length}`)
             .setColor('#fbbf24');
           
-          const options = pendingCodes.slice(0, 25).map((req, idx) => ({
+          const options = pendingCodes.slice(0, 23).map((req, idx) => ({
             label: `${req.fullName} - ${req.code}`.slice(0, 100),
             value: `military_code_${req.userId}`
           }));
@@ -1772,6 +1860,7 @@ client.on('interactionCreate', async interaction => {
       }
     }
 
+
     // معالجة قائمة أكواد العسكر قيد المراجعة
     if (interaction.isStringSelectMenu() && interaction.customId === 'military_codes_menu') {
       const userId = interaction.values[0].replace('military_code_', '');
@@ -1791,11 +1880,11 @@ client.on('interactionCreate', async interaction => {
       const row = new ActionRowBuilder()
         .addComponents(
           new ButtonBuilder()
-            .setCustomId(`approve_military_code_${userId}`)
+            .setCustomId(`accept_military_code_${pendingRequest.requestId}`)
             .setLabel('قبول الكود')
             .setStyle(ButtonStyle.Success),
           new ButtonBuilder()
-            .setCustomId(`reject_military_code_${userId}`)
+            .setCustomId(`reject_military_code_${pendingRequest.requestId}`)
             .setLabel('رفض الكود')
             .setStyle(ButtonStyle.Danger)
         );
@@ -1804,30 +1893,21 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
-    // معالجة قبول/رفض الكود العسكري
-    if (interaction.isButton() && interaction.customId.startsWith('approve_military_code_')) {
+    // معالجة قبول/رفض الكود العسكري (مثل قبول/رفض الهويات)
+    if (interaction.isButton() && interaction.customId.startsWith('accept_military_code_')) {
       // التحقق من رتبة مسؤول الشرطة
-      const policeAdminRoleId = guildSettings[interaction.guildId]?.policeAdminRoleId;
-      if (!policeAdminRoleId || !interaction.member.roles.cache.has(policeAdminRoleId)) {
+      if (!hasPoliceAdminRole(interaction.member, interaction.guildId)) {
         await interaction.reply({ content: '❌ ليس لديك صلاحية قبول الأكواد العسكرية. يجب أن تحمل رتبة مسؤول الشرطة.', ephemeral: true });
         return;
       }
       
-      const userId = interaction.customId.replace('approve_military_code_', '');
-      const requestIndex = pendingMilitaryCodeRequests.findIndex(req => req.userId === userId && req.guildId === interaction.guildId);
-      
-      if (requestIndex === -1) {
-        await interaction.reply({ content: '❌ لم يتم العثور على طلب الكود.', ephemeral: true });
-        return;
-      }
-      
-      // عرض مودال لكتابة سبب القبول
+      const requestId = interaction.customId.replace('accept_military_code_', '');
       const modal = new ModalBuilder()
-        .setCustomId(`approve_military_code_modal_${userId}`)
+        .setCustomId(`accept_military_code_modal_${requestId}`)
         .setTitle('سبب قبول الكود العسكري');
       
       const reasonInput = new TextInputBuilder()
-        .setCustomId('approve_reason')
+        .setCustomId('accept_reason')
         .setLabel('سبب القبول')
         .setStyle(TextInputStyle.Paragraph)
         .setPlaceholder('اكتب سبب قبول الكود العسكري هنا...')
@@ -1841,23 +1921,14 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.isButton() && interaction.customId.startsWith('reject_military_code_')) {
       // التحقق من رتبة مسؤول الشرطة
-      const policeAdminRoleId = guildSettings[interaction.guildId]?.policeAdminRoleId;
-      if (!policeAdminRoleId || !interaction.member.roles.cache.has(policeAdminRoleId)) {
+      if (!hasPoliceAdminRole(interaction.member, interaction.guildId)) {
         await interaction.reply({ content: '❌ ليس لديك صلاحية رفض الأكواد العسكرية. يجب أن تحمل رتبة مسؤول الشرطة.', ephemeral: true });
         return;
       }
       
-      const userId = interaction.customId.replace('reject_military_code_', '');
-      const requestIndex = pendingMilitaryCodeRequests.findIndex(req => req.userId === userId && req.guildId === interaction.guildId);
-      
-      if (requestIndex === -1) {
-        await interaction.reply({ content: '❌ لم يتم العثور على طلب الكود.', ephemeral: true });
-        return;
-      }
-      
-      // عرض مودال لكتابة سبب الرفض
+      const requestId = interaction.customId.replace('reject_military_code_', '');
       const modal = new ModalBuilder()
-        .setCustomId(`reject_military_code_modal_${userId}`)
+        .setCustomId(`reject_military_code_modal_${requestId}`)
         .setTitle('سبب رفض الكود العسكري');
       
       const reasonInput = new TextInputBuilder()
@@ -2195,12 +2266,12 @@ client.on('interactionCreate', async interaction => {
               .setTimestamp();
             
             const acceptButton = new ButtonBuilder()
-              .setCustomId(`accept_code_user_${userId}`)
+              .setCustomId(`accept_military_code_${requestId}`)
               .setLabel('قبول')
               .setStyle(ButtonStyle.Success);
             
             const rejectButton = new ButtonBuilder()
-              .setCustomId(`reject_code_user_${userId}`)
+              .setCustomId(`reject_military_code_${requestId}`)
               .setLabel('رفض')
               .setStyle(ButtonStyle.Danger);
             
@@ -2216,396 +2287,191 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
-    // أزرار قبول/رفض الكود العسكري في روم المراجعة (تعتمد على requestId)
-    if (interaction.isButton() && interaction.customId.startsWith('accept_code_user_')) {
-      const policeAdminRoleId = guildSettings[interaction.guildId]?.policeAdminRoleId;
-      if (!policeAdminRoleId || !interaction.member.roles.cache.has(policeAdminRoleId)) {
-        await interaction.reply({ content: '❌ ليس لديك صلاحية قبول الأكواد العسكرية. يجب أن تحمل رتبة مسؤول الشرطة.', ephemeral: true });
-        return;
-      }
-      const userId = interaction.customId.replace('accept_code_user_', '');
-      const modal = new ModalBuilder()
-        .setCustomId(`accept_military_code_modal_${userId}`)
-        .setTitle('سبب قبول الكود العسكري');
-      const reasonInput = new TextInputBuilder()
-        .setCustomId('accept_reason')
-        .setLabel('سبب القبول')
-        .setStyle(TextInputStyle.Paragraph)
-        .setPlaceholder('اكتب سبب قبول الكود العسكري هنا...')
-        .setRequired(true);
-      modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
-      await interaction.showModal(modal);
-      return;
-    }
 
-    if (interaction.isButton() && interaction.customId.startsWith('reject_code_user_')) {
-      const policeAdminRoleId = guildSettings[interaction.guildId]?.policeAdminRoleId;
-      if (!policeAdminRoleId || !interaction.member.roles.cache.has(policeAdminRoleId)) {
-        await interaction.reply({ content: '❌ ليس لديك صلاحية رفض الأكواد العسكرية. يجب أن تحمل رتبة مسؤول الشرطة.', ephemeral: true });
-        return;
-      }
-      const userId = interaction.customId.replace('reject_code_user_', '');
-      const modal = new ModalBuilder()
-        .setCustomId(`reject_military_code_modal_${userId}`)
-        .setTitle('سبب رفض الكود العسكري');
-      const reasonInput = new TextInputBuilder()
-        .setCustomId('reject_reason')
-        .setLabel('سبب الرفض')
-        .setStyle(TextInputStyle.Paragraph)
-        .setPlaceholder('اكتب سبب رفض الكود العسكري هنا...')
-        .setRequired(true);
-      modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
-      await interaction.showModal(modal);
-      return;
-    }
 
-    // مودالات قبول/رفض برقم الطلب (requestId) في روم المراجعة
+
+    // معالج مودال قبول الكود العسكري (مثل قبول الهويات)
     if (interaction.isModalSubmit() && interaction.customId.startsWith('accept_military_code_modal_')) {
-      const userIdFromModal = interaction.customId.replace('accept_military_code_modal_', '');
-      const reason = interaction.fields.getTextInputValue('accept_reason');
-      let reqIndex = pendingMilitaryCodeRequests.findIndex(r => r.userId === userIdFromModal && r.guildId === interaction.guildId);
-      let request = reqIndex !== -1 ? pendingMilitaryCodeRequests[reqIndex] : null;
-      // Fallback: حاول استخراج الطلب من رسالة روم المراجعة
-      if (!request) {
-        try {
-          const reviewRoomIdFb = guildSettings[interaction.guildId]?.militaryCodeReviewRoomId;
-          const reviewChannelFb = reviewRoomIdFb ? interaction.guild.channels.cache.get(reviewRoomIdFb) : null;
-          if (reviewChannelFb) {
-            const msgs = await reviewChannelFb.messages.fetch({ limit: 50 });
-            const originalMsg = msgs.find(m => m.embeds[0]?.description?.includes(`<@${userIdFromModal}>`));
-            if (originalMsg) {
-              const desc = originalMsg.embeds[0].description || '';
-              const userMatch = desc.match(/\*\*المستخدم:\*\*\s+<@(\d+)>/);
-              const nameMatch = desc.match(/\*\*الاسم:\*\*\s+([^\n]+)/);
-              const codeMatch = desc.match(/\*\*الكود(?:\s+المطلوب)?:\*\*\s+`([^`]+)`/);
-              const usernameMatch = desc.match(/\(([^)]+)\)/); // بين الأقواس بعد المستخدم
-              const userId = userMatch ? userMatch[1] : null;
-              if (userId && codeMatch && userId === userIdFromModal) {
-                request = {
-                  requestId: requestId,
-                  userId,
-                  guildId: interaction.guildId,
-                  code: codeMatch[1],
-                  username: usernameMatch ? usernameMatch[1] : 'غير معروف',
-                  fullName: nameMatch ? nameMatch[1] : 'غير معروف',
-                  requestedAt: new Date().toISOString()
-                };
-              }
-            }
-          }
-        } catch (e) { /* تجاهل */ }
-      }
-      if (!request) {
-        await interaction.reply({ content: '❌ لم يتم العثور على طلب الكود لهذا المستخدم.', ephemeral: true });
+      try {
+        const requestId = interaction.customId.replace('accept_military_code_modal_', '');
+        const reason = interaction.fields.getTextInputValue('accept_reason');
+        
+        console.log('🔍 معالجة قبول الكود العسكري:', requestId);
+        console.log('📋 طلبات الأكواد المعلقة:', pendingMilitaryCodeRequests.map(req => ({ requestId: req.requestId, fullName: req.fullName })));
+        
+        // البحث عن الطلب
+        const requestIndex = pendingMilitaryCodeRequests.findIndex(req => req.requestId === requestId);
+      if (requestIndex === -1) {
+          console.log('❌ لم يتم العثور على طلب الكود:', requestId);
+        await interaction.reply({ content: '❌ لم يتم العثور على طلب الكود.', ephemeral: true });
         return;
       }
-      if (reqIndex !== -1) {
-        pendingMilitaryCodeRequests.splice(reqIndex, 1);
-      }
-      setMilitaryCode(request.userId, interaction.guildId, request.code);
-      saveAllData();
-      // تحديث رسالة الطلب في روم المراجعة
-      const reviewRoomId = guildSettings[interaction.guildId]?.militaryCodeReviewRoomId;
-      if (reviewRoomId) {
-        try {
-          const reviewChannel = interaction.guild.channels.cache.get(reviewRoomId);
-          if (reviewChannel) {
-            const messages = await reviewChannel.messages.fetch({ limit: 50 });
-            const originalMessage = messages.find(msg => msg.embeds[0]?.description?.includes(requestId));
-            if (originalMessage) {
-              const embed = new EmbedBuilder()
-                .setTitle('تم قبول الكود العسكري')
-                .setDescription(`**المستخدم:** <@${request.userId}> (${request.username})\n**الاسم:** ${request.fullName}\n**الكود:** \`${request.code}\`\n**وقت الطلب:** <t:${Math.floor(Date.now() / 1000)}:F>\n**معرف الطلب:** ${request.requestId}\n\n**تم القبول من قبل:** ${interaction.user}\n**سبب القبول:** ${reason}`)
-                .setColor('#00ff00')
-                .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
-                .setTimestamp();
-              await originalMessage.edit({ embeds: [embed], components: [] });
-            }
-          }
-        } catch (e) { /* تجاهل الخطأ */ }
-      }
-      // منح رتبة القبول إن وُجدت
-      try {
-        const roleId = guildSettings[interaction.guildId]?.approvalRoleId;
-        if (roleId) {
-          const member = await interaction.guild.members.fetch(request.userId).catch(() => null);
-          if (member && !member.roles.cache.has(roleId)) await member.roles.add(roleId).catch(() => {});
+      
+      const request = pendingMilitaryCodeRequests[requestIndex];
+        
+        // إضافة الكود العسكري
+        if (!militaryData.codes[interaction.guildId]) {
+          militaryData.codes[interaction.guildId] = {};
         }
-      } catch (e) { /* تجاهل الخطأ */ }
-      // لوق
+        militaryData.codes[interaction.guildId][request.userId] = request.code;
+        
+        // حذف الطلب من القائمة المعلقة
+      pendingMilitaryCodeRequests.splice(requestIndex, 1);
+      saveAllData();
+      
+        // إرسال رسالة تأكيد
+        await interaction.reply({ 
+          content: `✅ **لقد تم قبول الكود العسكري بنجاح!**\n\n**السبب:** ${reason}\n**تم قبولك من قبل:** <@${interaction.user.id}>`, 
+          ephemeral: true 
+        });
+        
+        // إرسال إشعار للمستخدم
+        try {
+          const user = await client.users.fetch(request.userId);
+          const userEmbed = new EmbedBuilder()
+            .setTitle('✅ لقد تم قبول الكود العسكري بنجاح!')
+            .setDescription(`**الكود العسكري:** \`${request.code}\`\n**سبب القبول:** ${reason}\n**تم قبولك من قبل:** <@${interaction.user.id}>`)
+                .setColor('#00ff00')
+                .setTimestamp();
+              
+          await user.send({ embeds: [userEmbed] });
+        } catch (error) {
+          console.error('❌ خطأ في إرسال إشعار للمستخدم:', error);
+        }
+        
+        // تحديث الإيمبيد الأصلي للطلب
+        try {
+          const updatedEmbed = new EmbedBuilder()
+            .setTitle('✅ تم قبول الكود العسكري')
+            .setDescription(`**المستخدم:** <@${request.userId}>\n**الاسم الكامل:** ${request.fullName}\n**الكود العسكري:** \`${request.code}\`\n**تم القبول من قبل:** <@${interaction.user.id}>\n**سبب القبول:** ${reason}`)
+            .setColor('#00ff00')
+            .setTimestamp()
+            .setThumbnail(interaction.user.displayAvatarURL());
+          
+          await interaction.message.edit({ 
+            embeds: [updatedEmbed], 
+            components: [] 
+          });
+        } catch (error) {
+          console.error('❌ خطأ في تحديث الإيمبيد:', error);
+        }
+
+        // إرسال سجل إلى قناة اللوق
+        try {
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
-        const logChannel = interaction.guild.channels.cache.get(logChannelId);
-        if (logChannel) {
-          const logEmbed = new EmbedBuilder()
-            .setTitle('تم قبول الكود العسكري')
-            .setDescription(`**المستخدم:** <@${request.userId}>\n**الاسم:** ${request.fullName}\n**الكود:** ${request.code}\n**سبب القبول:** ${reason}\n**تم القبول من قبل:** <@${interaction.user.id}>`)
-            .setColor('#00ff00')
-            .setTimestamp();
-          await logChannel.send({ embeds: [logEmbed] });
+          const logChannel = interaction.guild.channels.cache.get(logChannelId);
+          if (logChannel) {
+            const logEmbed = new EmbedBuilder()
+                .setTitle('✅ تم قبول كود عسكري جديد')
+                .setDescription(`**تم قبول كود عسكري:** ${request.fullName}\n**الكود:** \`${request.code}\`\n**من قبل:** <@${interaction.user.id}>\n**السبب:** ${reason}`)
+              .setColor('#00ff00')
+                .setTimestamp()
+                .setThumbnail(interaction.user.displayAvatarURL());
+              
+            await logChannel.send({ embeds: [logEmbed] });
+          }
+          }
+        } catch (error) {
+          console.error('❌ خطأ في إرسال سجل اللوق:', error);
         }
-      }
-      // DM
-      try {
-        const u = await client.users.fetch(request.userId);
-        const dm = new EmbedBuilder()
-          .setTitle('تم قبول الكود العسكري')
-          .setDescription(`مرحباً ${u.username}!\n\nتم قبول طلب الكود العسكري الخاص بك.\n\n**الكود:** \`${request.code}\`\n**تم القبول من قبل:** ${interaction.user}\n**سبب القبول:** ${reason}`)
-          .setColor('#00ff00')
-          .setTimestamp();
-        await u.send({ embeds: [dm] });
-      } catch (e) { /* تجاهل */ }
-      await interaction.reply({ content: '✅ تم قبول الكود العسكري بنجاح!', ephemeral: true });
+        
+        console.log('✅ تم قبول طلب الكود بنجاح:', requestId);
+        return;
+      } catch (error) {
+        console.error('❌ خطأ في معالجة قبول طلب الكود:', error);
+        await interaction.reply({ content: '❌ حدث خطأ أثناء معالجة قبول طلب الكود. يرجى المحاولة مرة أخرى.', ephemeral: true });
       return;
+      }
     }
 
+    // معالج مودال رفض الكود العسكري (مثل رفض الهويات)
     if (interaction.isModalSubmit() && interaction.customId.startsWith('reject_military_code_modal_')) {
-      const userIdFromModal = interaction.customId.replace('reject_military_code_modal_', '');
+      try {
+        const requestId = interaction.customId.replace('reject_military_code_modal_', '');
       const reason = interaction.fields.getTextInputValue('reject_reason');
-      let reqIndex = pendingMilitaryCodeRequests.findIndex(r => r.userId === userIdFromModal && r.guildId === interaction.guildId);
-      let request = reqIndex !== -1 ? pendingMilitaryCodeRequests[reqIndex] : null;
-      // Fallback: استخراج من رسالة روم المراجعة
-      if (!request) {
-        try {
-          const reviewRoomIdFb = guildSettings[interaction.guildId]?.militaryCodeReviewRoomId;
-          const reviewChannelFb = reviewRoomIdFb ? interaction.guild.channels.cache.get(reviewRoomIdFb) : null;
-          if (reviewChannelFb) {
-            const msgs = await reviewChannelFb.messages.fetch({ limit: 50 });
-            const originalMsg = msgs.find(m => m.embeds[0]?.description?.includes(`<@${userIdFromModal}>`));
-            if (originalMsg) {
-              const desc = originalMsg.embeds[0].description || '';
-              const userMatch = desc.match(/\*\*المستخدم:\*\*\s+<@(\d+)>/);
-              const nameMatch = desc.match(/\*\*الاسم:\*\*\s+([^\n]+)/);
-              const codeMatch = desc.match(/\*\*الكود(?:\s+المطلوب)?:\*\*\s+`([^`]+)`/);
-              const usernameMatch = desc.match(/\(([^)]+)\)/);
-              const userId = userMatch ? userMatch[1] : null;
-              if (userId && codeMatch && userId === userIdFromModal) {
-                request = {
-                  requestId: requestId,
-                  userId,
-                  guildId: interaction.guildId,
-                  code: codeMatch[1],
-                  username: usernameMatch ? usernameMatch[1] : 'غير معروف',
-                  fullName: nameMatch ? nameMatch[1] : 'غير معروف',
-                  requestedAt: new Date().toISOString()
-                };
-              }
-            }
-          }
-        } catch (e) { /* تجاهل */ }
-      }
-      if (!request) {
-        await interaction.reply({ content: '❌ لم يتم العثور على طلب الكود لهذا المستخدم.', ephemeral: true });
+      
+        console.log('🔍 معالجة رفض الكود العسكري:', requestId);
+        console.log('📋 طلبات الأكواد المعلقة:', pendingMilitaryCodeRequests.map(req => ({ requestId: req.requestId, fullName: req.fullName })));
+        
+        // البحث عن الطلب
+        const requestIndex = pendingMilitaryCodeRequests.findIndex(req => req.requestId === requestId);
+      if (requestIndex === -1) {
+          console.log('❌ لم يتم العثور على طلب الكود:', requestId);
+        await interaction.reply({ content: '❌ لم يتم العثور على طلب الكود.', ephemeral: true });
         return;
       }
-      if (reqIndex !== -1) {
-        pendingMilitaryCodeRequests.splice(reqIndex, 1);
-      }
+      
+      const request = pendingMilitaryCodeRequests[requestIndex];
+        
+        // حذف الطلب
+      pendingMilitaryCodeRequests.splice(requestIndex, 1);
       saveAllData();
-      // تحديث رسالة الطلب في روم المراجعة
-      const reviewRoomId = guildSettings[interaction.guildId]?.militaryCodeReviewRoomId;
-      if (reviewRoomId) {
+      
+        // إرسال رسالة تأكيد
+        await interaction.reply({ 
+          content: `❌ **لقد تم رفض الكود العسكري**\n\n**السبب:** ${reason}\n**تم رفضك من قبل:** <@${interaction.user.id}>`, 
+          ephemeral: true 
+        });
+        
+        // إرسال إشعار للمستخدم
         try {
-          const reviewChannel = interaction.guild.channels.cache.get(reviewRoomId);
-          if (reviewChannel) {
-            const messages = await reviewChannel.messages.fetch({ limit: 50 });
-            const originalMessage = messages.find(msg => msg.embeds[0]?.description?.includes(requestId));
-            if (originalMessage) {
-              const embed = new EmbedBuilder()
-                .setTitle('تم رفض الكود العسكري')
-                .setDescription(`**المستخدم:** <@${request.userId}> (${request.username})\n**الاسم:** ${request.fullName}\n**الكود:** \`${request.code}\`\n**وقت الطلب:** <t:${Math.floor(Date.now() / 1000)}:F>\n**معرف الطلب:** ${request.requestId}\n\n**تم الرفض من قبل:** ${interaction.user}\n**سبب الرفض:** ${reason}`)
-                .setColor('#ff0000')
-                .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
-                .setTimestamp();
-              await originalMessage.edit({ embeds: [embed], components: [] });
-            }
-          }
-        } catch (e) { /* تجاهل الخطأ */ }
-      }
-      // لوق
-      const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
-      if (logChannelId) {
-        const logChannel = interaction.guild.channels.cache.get(logChannelId);
-        if (logChannel) {
-          const logEmbed = new EmbedBuilder()
-            .setTitle('تم رفض الكود العسكري')
-            .setDescription(`**المستخدم:** <@${request.userId}>\n**الاسم:** ${request.fullName}\n**الكود:** ${request.code}\n**سبب الرفض:** ${reason}\n**تم الرفض من قبل:** <@${interaction.user.id}>`)
+          const user = await client.users.fetch(request.userId);
+          const userEmbed = new EmbedBuilder()
+            .setTitle('❌ لقد تم رفض الكود العسكري')
+            .setDescription(`**الكود العسكري:** \`${request.code}\`\n**سبب الرفض:** ${reason}\n**تم رفضك من قبل:** <@${interaction.user.id}>\n\nيمكنك تقديم طلب جديد إذا أردت.`)
             .setColor('#ff0000')
             .setTimestamp();
-          await logChannel.send({ embeds: [logEmbed] });
+          
+          await user.send({ embeds: [userEmbed] });
+        } catch (error) {
+          console.error('❌ خطأ في إرسال إشعار للمستخدم:', error);
         }
-      }
-      // DM
-      try {
-        const u = await client.users.fetch(request.userId);
-        const dm = new EmbedBuilder()
-          .setTitle('تم رفض الكود العسكري')
-          .setDescription(`مرحباً ${u.username}!\n\nتم رفض طلب الكود العسكري الخاص بك.\n\n**الكود:** \`${request.code}\`\n**تم الرفض من قبل:** ${interaction.user}\n**سبب الرفض:** ${reason}`)
-          .setColor('#ff0000')
-          .setTimestamp();
-        await u.send({ embeds: [dm] });
-      } catch (e) { /* تجاهل */ }
-      await interaction.reply({ content: '✅ تم رفض الكود العسكري بنجاح!', ephemeral: true });
-      return;
-    }
-
-    // معالج مودال قبول الكود العسكري
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('approve_military_code_modal_')) {
-      const userId = interaction.customId.replace('approve_military_code_modal_', '');
-      const reason = interaction.fields.getTextInputValue('approve_reason');
-      const requestIndex = pendingMilitaryCodeRequests.findIndex(req => req.userId === userId && req.guildId === interaction.guildId);
-      
-      if (requestIndex === -1) {
-        await interaction.reply({ content: '❌ لم يتم العثور على طلب الكود.', ephemeral: true });
-        return;
-      }
-      
-      const request = pendingMilitaryCodeRequests[requestIndex];
-      setMilitaryCode(userId, interaction.guildId, request.code);
-      pendingMilitaryCodeRequests.splice(requestIndex, 1);
-      saveAllData();
-      
-      // تحديث الإيمبيد الأصلي في روم المراجعة
-      const reviewRoomId = guildSettings[interaction.guildId]?.militaryCodeReviewRoomId;
-      if (reviewRoomId) {
+        
+        // تحديث الإيمبيد الأصلي للطلب
         try {
-          const reviewChannel = interaction.guild.channels.cache.get(reviewRoomId);
-          if (reviewChannel) {
-            // البحث عن الرسالة الأصلية وتحديثها
-            const messages = await reviewChannel.messages.fetch({ limit: 50 });
-            const originalMessage = messages.find(msg => 
-              msg.embeds.length > 0 && 
-              msg.embeds[0].title?.includes('طلب كود عسكري جديد') &&
-              msg.embeds[0].description?.includes(request.requestId)
-            );
-            
-            if (originalMessage) {
               const updatedEmbed = new EmbedBuilder()
-                .setTitle('تم قبول الكود العسكري')
-                .setDescription(`**المستخدم:** ${interaction.user} (${request.username})\n**الاسم:** ${request.fullName}\n**الكود:** \`${request.code}\`\n**وقت الطلب:** <t:${Math.floor(Date.now() / 1000)}:F>\n**معرف الطلب:** ${request.requestId}\n\n**تم القبول من قبل:** ${interaction.user}\n**سبب القبول:** ${reason}`)
-                .setColor('#00ff00')
-                .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
-                .setTimestamp();
-              
-              await originalMessage.edit({ embeds: [updatedEmbed], components: [] });
-            }
-          }
-        } catch (e) { /* تجاهل الخطأ */ }
-      }
-
-      // منح رتبة القبول للمستخدم إن كانت معرفة في الإعدادات
-      try {
-        const roleId = guildSettings[interaction.guildId]?.approvalRoleId;
-        if (roleId) {
-          const member = await interaction.guild.members.fetch(userId).catch(() => null);
-          const role = interaction.guild.roles.cache.get(roleId);
-          if (member && role && !member.roles.cache.has(roleId)) {
-            await member.roles.add(roleId).catch(() => {});
-          }
-        }
-      } catch (e) { /* تجاهل الخطأ */ }
-      
-      const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
-      if (logChannelId) {
-        try {
-          const logChannel = interaction.guild.channels.cache.get(logChannelId);
-          if (logChannel) {
-            const logEmbed = new EmbedBuilder()
-              .setTitle('تم قبول الكود العسكري')
-              .setDescription(`**المستخدم:** <@${userId}>\n**الاسم:** ${request.fullName}\n**الكود:** ${request.code}\n**سبب القبول:** ${reason}\n**تم القبول من قبل:** <@${interaction.user.id}>`)
-              .setColor('#00ff00')
-              .setTimestamp();
-            await logChannel.send({ embeds: [logEmbed] });
-          }
-        } catch (e) { /* تجاهل الخطأ */ }
-      }
-      
-      // إرسال رسالة خاصة للعسكري
-      try {
-        const user = await client.users.fetch(userId);
-        const dmEmbed = new EmbedBuilder()
-          .setTitle('تم قبول الكود العسكري')
-          .setDescription(`مرحباً ${user.username}!\n\nتم قبول طلب الكود العسكري الخاص بك بنجاح.\n\n**الكود:** \`${request.code}\`\n**تم القبول من قبل:** ${interaction.user}\n**سبب القبول:** ${reason}`)
-          .setColor('#00ff00')
-          .setTimestamp();
-        await user.send({ embeds: [dmEmbed] });
-      } catch (err) { /* تجاهل الخطأ */ }
-      
-      await interaction.reply({ content: 'تم قبول الكود العسكري بنجاح!', ephemeral: true });
-      return;
-    }
-
-    // معالج مودال رفض الكود العسكري
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('reject_military_code_modal_')) {
-      const userId = interaction.customId.replace('reject_military_code_modal_', '');
-      const reason = interaction.fields.getTextInputValue('reject_reason');
-      const requestIndex = pendingMilitaryCodeRequests.findIndex(req => req.userId === userId && req.guildId === interaction.guildId);
-      
-      if (requestIndex === -1) {
-        await interaction.reply({ content: '❌ لم يتم العثور على طلب الكود.', ephemeral: true });
-        return;
-      }
-      
-      const request = pendingMilitaryCodeRequests[requestIndex];
-      pendingMilitaryCodeRequests.splice(requestIndex, 1);
-      saveAllData();
-      
-      // تحديث الإيمبيد الأصلي في روم المراجعة
-      const reviewRoomId = guildSettings[interaction.guildId]?.militaryCodeReviewRoomId;
-      if (reviewRoomId) {
-        try {
-          const reviewChannel = interaction.guild.channels.cache.get(reviewRoomId);
-          if (reviewChannel) {
-            // البحث عن الرسالة الأصلية وتحديثها
-            const messages = await reviewChannel.messages.fetch({ limit: 50 });
-            const originalMessage = messages.find(msg => 
-              msg.embeds.length > 0 && 
-              msg.embeds[0].title?.includes('طلب كود عسكري جديد') &&
-              msg.embeds[0].description?.includes(request.requestId)
-            );
-            
-            if (originalMessage) {
-              const updatedEmbed = new EmbedBuilder()
-                .setTitle('تم رفض الكود العسكري')
-                .setDescription(`**المستخدم:** ${interaction.user} (${request.username})\n**الاسم:** ${request.fullName}\n**الكود:** \`${request.code}\`\n**وقت الطلب:** <t:${Math.floor(Date.now() / 1000)}:F>\n**معرف الطلب:** ${request.requestId}\n\n**تم الرفض من قبل:** ${interaction.user}\n**سبب الرفض:** ${reason}`)
+            .setTitle('❌ تم رفض الكود العسكري')
+            .setDescription(`**المستخدم:** <@${request.userId}>\n**الاسم الكامل:** ${request.fullName}\n**الكود العسكري:** \`${request.code}\`\n**تم الرفض من قبل:** <@${interaction.user.id}>\n**سبب الرفض:** ${reason}`)
                 .setColor('#ff0000')
-                .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
-                .setTimestamp();
-              
-              await originalMessage.edit({ embeds: [updatedEmbed], components: [] });
-            }
-          }
-        } catch (e) { /* تجاهل الخطأ */ }
-      }
-      
+            .setTimestamp()
+            .setThumbnail(interaction.user.displayAvatarURL());
+          
+          await interaction.message.edit({ 
+            embeds: [updatedEmbed], 
+            components: [] 
+          });
+        } catch (error) {
+          console.error('❌ خطأ في تحديث الإيمبيد:', error);
+        }
+
+        // إرسال سجل إلى قناة اللوق
+        try {
       const logChannelId = guildSettings[interaction.guildId]?.logChannelId;
       if (logChannelId) {
-        try {
           const logChannel = interaction.guild.channels.cache.get(logChannelId);
           if (logChannel) {
             const logEmbed = new EmbedBuilder()
-              .setTitle('تم رفض الكود العسكري')
-              .setDescription(`**المستخدم:** <@${userId}>\n**الاسم:** ${request.fullName}\n**الكود:** ${request.code}\n**سبب الرفض:** ${reason}\n**تم الرفض من قبل:** <@${interaction.user.id}>`)
+                .setTitle('❌ تم رفض كود عسكري')
+                .setDescription(`**تم رفض كود عسكري:** ${request.fullName}\n**الكود:** \`${request.code}\`\n**من قبل:** <@${interaction.user.id}>\n**السبب:** ${reason}`)
               .setColor('#ff0000')
-              .setTimestamp();
+                .setTimestamp()
+                .setThumbnail(interaction.user.displayAvatarURL());
+              
             await logChannel.send({ embeds: [logEmbed] });
           }
-        } catch (e) { /* تجاهل الخطأ */ }
-      }
-      
-      // إرسال رسالة خاصة للعسكري
-      try {
-        const user = await client.users.fetch(userId);
-        const dmEmbed = new EmbedBuilder()
-          .setTitle('تم رفض الكود العسكري')
-          .setDescription(`مرحباً ${user.username}!\n\nتم رفض طلب الكود العسكري الخاص بك.\n\n**الكود:** \`${request.code}\`\n**تم الرفض من قبل:** ${interaction.user}\n**سبب الرفض:** ${reason}\n\nيمكنك تقديم طلب كود عسكري جديد مرة أخرى.`)
-          .setColor('#ff0000')
-          .setTimestamp();
-        await user.send({ embeds: [dmEmbed] });
-      } catch (err) { /* تجاهل الخطأ */ }
-      
-      await interaction.reply({ content: 'تم رفض الكود العسكري بنجاح!', ephemeral: true });
+          }
+        } catch (error) {
+          console.error('❌ خطأ في إرسال سجل اللوق:', error);
+        }
+        
+        console.log('✅ تم رفض طلب الكود بنجاح:', requestId);
+        return;
+      } catch (error) {
+        console.error('❌ خطأ في معالجة رفض طلب الكود:', error);
+        await interaction.reply({ content: '❌ حدث خطأ أثناء معالجة رفض طلب الكود. يرجى المحاولة مرة أخرى.', ephemeral: true });
       return;
+      }
     }
 
     if (interaction.isModalSubmit() && interaction.customId === 'modal_add_military_points') {
@@ -2752,7 +2618,7 @@ client.on('interactionCreate', async interaction => {
       // إعادة بناء القائمة المنسدلة بنفس الأسماء (أول 22 هوية)
       const guildIdentities = identities.filter(i => i.guildId === interaction.guildId);
       const page = 1;
-      const pageSize = 22;
+      const pageSize = 23;
       const totalPages = Math.ceil(guildIdentities.length / pageSize) || 1;
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -2770,6 +2636,31 @@ client.on('interactionCreate', async interaction => {
       await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
       return;
     }
+    // معالج زر "رؤية المزيد" للهويات
+    if (interaction.isStringSelectMenu() && interaction.customId === 'identity_select_menu_page_1' && interaction.values[0] === 'see_more_identities') {
+      const guildIdentities = identities.filter(i => i.guildId === interaction.guildId);
+      const page = 2; // الصفحة التالية
+      const pageSize = 23;
+      const totalPages = Math.ceil(guildIdentities.length / pageSize) || 1;
+      const start = (page - 1) * pageSize;
+      const end = start + pageSize;
+      const pageIdentities = guildIdentities.slice(start, end);
+      const options = pageIdentities.map(i => ({ label: i.fullName, value: `identity_${i.userId}` }));
+      
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId('identity_select_menu_page_1')
+        .setPlaceholder('اختر هوية...')
+        .addOptions(options);
+      const row = new ActionRowBuilder().addComponents(menu);
+      const embed = new EmbedBuilder()
+        .setTitle('إدارة الهويات')
+        .setDescription('اختر هوية من القائمة أدناه لعرضها أو تعديلها أو حذفها.')
+        .setImage('https://media.discordapp.net/attachments/1388450262628176034/1396257833506443375/image.png?ex=687d6df0&is=687c1c70&hm=111158be2d0bb467417eff40ae5788bd1200cb333942e37dbe281653754dd614&=&format=webp&quality=lossless')
+        .setColor('#00ff00');
+      await interaction.update({ embeds: [embed], components: [row] });
+      return;
+    }
+
     // عند اختيار 'تعديل | حذف الهوية' من القائمة المنسدلة
     if (interaction.isStringSelectMenu() && interaction.customId === 'identity_select_menu_page_1' && interaction.values[0].startsWith('identity_')) {
       const userId = interaction.values[0].replace('identity_', '');
@@ -3109,27 +3000,38 @@ client.on('interactionCreate', async interaction => {
       }
       // توليد صورة البطاقة (canvas)
       try {
+        // إن كانت صورة البطاقة الرسمية مضبوطة للمطور، استخدمها
+        // (تمت إزالة استخدام صورة بطاقة رسمية)
         const cardWidth = 600;
         const cardHeight = 400;
         const canvas = createCanvas(cardWidth, cardHeight);
         const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#f5f5f5';
-        ctx.fillRect(0, 0, cardWidth, cardHeight);
-        ctx.fillStyle = '#1e3a8a';
-        ctx.fillRect(0, 0, cardWidth, 60);
-        ctx.fillStyle = '#1e3a8a';
-        ctx.fillRect(0, cardHeight - 50, cardWidth, 50);
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 24px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('بطاقة الهوية الرسمية', cardWidth / 2, 35);
+        // استخدم قالب صورة البطاقة كخلفية مع كاش
+        try {
+          if (!cachedTemplateImage) {
+            cachedTemplateImage = await loadImage('2.png');
+          }
+          ctx.drawImage(cachedTemplateImage, 0, 0, cardWidth, cardHeight);
+        } catch (_) {
+          ctx.clearRect(0, 0, cardWidth, cardHeight);
+        }
         const user = await client.users.fetch(identity.userId).catch(() => null);
         const avatarURL = user ? user.displayAvatarURL({ extension: 'png', size: 256 }) : null;
         if (avatarURL) {
-          const avatar = await loadImage(avatarURL);
-          const avatarSize = 120;
-          const avatarX = 50;
-          const avatarY = 80;
+          let avatar;
+          try {
+            const cached = avatarCache.get(avatarURL);
+            const now = Date.now();
+            if (cached && now - cached.at < AVATAR_CACHE_TTL_MS) {
+              avatar = cached.img;
+            } else {
+              avatar = await loadImage(avatarURL);
+              avatarCache.set(avatarURL, { img: avatar, at: now });
+            }
+          } catch (_) { avatar = null; }
+          const avatarSize = 150;
+          const avatarX = 70;
+          const avatarY = 140;
           ctx.fillStyle = '#e5e7eb';
           ctx.beginPath();
           ctx.arc(avatarX + avatarSize/2, avatarY + avatarSize/2, avatarSize/2 + 5, 0, Math.PI * 2);
@@ -3142,38 +3044,32 @@ client.on('interactionCreate', async interaction => {
           ctx.drawImage(avatar, avatarX, avatarY, avatarSize, avatarSize);
           ctx.restore();
         }
-        ctx.fillStyle = '#1f2937';
-        ctx.font = 'bold 16px Arial';
+        ctx.fillStyle = '#000000';
         ctx.textAlign = 'right';
-        const labels = [
-          { text: 'الاسم الكامل', y: 100 },
-          { text: 'المدينة', y: 140 },
-          { text: 'تاريخ الميلاد', y: 180 },
-          { text: 'الجنسية', y: 220 },
-          { text: 'رقم الهوية', y: 260 }
-        ];
-        labels.forEach(label => {
-          ctx.fillText(label.text, 280, label.y);
-        });
-        ctx.textAlign = 'left';
-        ctx.font = '16px Arial';
-        ctx.fillText(identity.fullName, 300, 100);
-        ctx.fillText(identity.city, 300, 140);
+        ctx.font = '24px Arial';
+        ctx.fillText(identity.fullName, 475, 162);
+        ctx.font = '24px Arial';
+        ctx.fillText(identity.city, 475, 210);
         const monthNames = {
           '1': 'يناير', '2': 'فبراير', '3': 'مارس', '4': 'أبريل', '5': 'مايو', '6': 'يونيو',
           '7': 'يوليو', '8': 'أغسطس', '9': 'سبتمبر', '10': 'أكتوبر', '11': 'نوفمبر', '12': 'ديسمبر'
         };
         const birthTextAr = `${identity.day} / ${monthNames[identity.month] || identity.month} / ${identity.year}`;
-        ctx.fillText(birthTextAr, 300, 180);
-        const genderText = identity.gender === 'male' ? 'ذكر' : 'أنثى';
-        ctx.fillText(genderText, 300, 220);
-        ctx.fillText(identity.nationalId, 300, 260);
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '16px Arial';
         ctx.textAlign = 'right';
-        ctx.fillText('تاريخ الإصدار :', cardWidth - 20, cardHeight - 20);
+        ctx.font = '24px Arial';
+        ctx.fillText(birthTextAr, 417, 250);
+        const genderText = identity.gender === 'male' ? 'ذكر' : 'أنثى';
+        ctx.fillStyle = '#000000';
+        ctx.font = '26px Arial';
+        ctx.fillText(genderText, 462, 306);
+        // رقم الهوية أسفل اليسار
         ctx.textAlign = 'left';
-        ctx.fillText(birthTextAr, 20, cardHeight - 20);
+        ctx.fillText(identity.nationalId, 87, cardHeight - 50);
+        // عرض التاريخ النهائي بلون أسود وبحجم 24px، بمحاذاة يمين
+        ctx.fillStyle = '#000000';
+        ctx.font = '24px Arial';
+        ctx.textAlign = 'right';
+        ctx.fillText(birthTextAr, 445, 345);
         ctx.fillStyle = '#fbbf24';
         ctx.beginPath();
         ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
@@ -3182,7 +3078,7 @@ client.on('interactionCreate', async interaction => {
         ctx.font = 'bold 14px Arial';
         ctx.textAlign = 'center';
         ctx.fillText('MDT', 50, cardHeight - 75);
-        const buffer = canvas.toBuffer('image/png');
+        const buffer = canvas.toBuffer('image/png', { compressionLevel: 9 });
         const embed = new EmbedBuilder()
           .setTitle('بطاقتك الشخصية')
           .setDescription(`**الاسم:** ${identity.fullName}\n**المدينة:** ${identity.city}\n**تاريخ الميلاد:** ${birthTextAr}\n**الجنس:** ${genderText}\n**رقم الهوية:** ${identity.nationalId}`)
@@ -3508,7 +3404,7 @@ client.on('interactionCreate', async interaction => {
         .setColor('#00ff00');
       const guildIdentities = identities.filter(i => i.guildId === interaction.guildId);
       const page = 1;
-      const pageSize = 22;
+      const pageSize = 23;
       const totalPages = Math.ceil(guildIdentities.length / pageSize) || 1;
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -3746,7 +3642,7 @@ client.on('interactionCreate', async interaction => {
           .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
           .addFields(
             { name: '👤 **المعلومات الشخصية**', value: `**الاسم:** ${identity?.fullName || 'غير محدد'}\n**الرقم الوطني:** ${identity?.nationalId || 'غير محدد'}`, inline: false },
-            { name: '🎖️ **المعلومات العسكرية**', value: `**الكود العسكري:** ${militaryCode ? `\`${militaryCode}\`` : 'غير محدد'}\n**الرتبة:** ${militaryUser?.rank || 'عسكري'}`, inline: false },
+            { name: '🎖️ **المعلومات العسكرية**', value: `**الكود العسكري:** ${militaryCode ? `\`${militaryCode}\`` : 'غير محدد'}\n**الرتبة:** ${militaryUser?.rank || 'مستجد'}`, inline: false },
             { name: '⭐ **النقاط العسكرية**', value: `**إجمالي النقاط:** \`${points} نقطة\``, inline: false }
           )
           .setFooter({ text: 'نظام النقاط العسكرية' })
@@ -3984,6 +3880,12 @@ client.on('interactionCreate', async interaction => {
       }
       
       if (selected === 'add_points_to_user') {
+        // التحقق من رتبة مسؤول الشرطة
+        if (!hasPoliceAdminRole(interaction.member, interaction.guildId)) {
+          await interaction.reply({ content: '❌ ليس لديك صلاحية إدارة النقاط العسكرية. يجب أن تحمل رتبة مسؤول الشرطة.', ephemeral: true });
+          return;
+        }
+        
         const modal = new ModalBuilder()
           .setCustomId('modal_add_military_points')
           .setTitle('إضافة نقاط عسكرية');
@@ -4011,6 +3913,12 @@ client.on('interactionCreate', async interaction => {
       }
       
       if (selected === 'remove_points_from_user') {
+        // التحقق من رتبة مسؤول الشرطة
+        if (!hasPoliceAdminRole(interaction.member, interaction.guildId)) {
+          await interaction.reply({ content: '❌ ليس لديك صلاحية إدارة النقاط العسكرية. يجب أن تحمل رتبة مسؤول الشرطة.', ephemeral: true });
+          return;
+        }
+        
         const modal = new ModalBuilder()
           .setCustomId('modal_remove_military_points')
           .setTitle('خصم نقاط عسكرية');
@@ -4038,6 +3946,12 @@ client.on('interactionCreate', async interaction => {
       }
       
       if (selected === 'view_all_points') {
+        // التحقق من رتبة مسؤول الشرطة
+        if (!hasPoliceAdminRole(interaction.member, interaction.guildId)) {
+          await interaction.reply({ content: '❌ ليس لديك صلاحية عرض جميع النقاط العسكرية. يجب أن تحمل رتبة مسؤول الشرطة.', ephemeral: true });
+          return;
+        }
+        
         const guildId = interaction.guildId;
         const allPoints = getAllMilitaryPoints(guildId);
         
@@ -4085,6 +3999,12 @@ client.on('interactionCreate', async interaction => {
       }
       
       if (selected === 'manage_military_codes') {
+        // التحقق من رتبة مسؤول الشرطة
+        if (!hasPoliceAdminRole(interaction.member, interaction.guildId)) {
+          await interaction.reply({ content: '❌ ليس لديك صلاحية إدارة الأكواد العسكرية. يجب أن تحمل رتبة مسؤول الشرطة.', ephemeral: true });
+          return;
+        }
+        
         const modal = new ModalBuilder()
           .setCustomId('modal_manage_military_codes')
           .setTitle('إدارة الأكواد العسكرية');
@@ -4104,6 +4024,12 @@ client.on('interactionCreate', async interaction => {
       }
 
       if (selected === 'manage_military_warnings') {
+        // التحقق من رتبة مسؤول الشرطة
+        if (!hasPoliceAdminRole(interaction.member, interaction.guildId)) {
+          await interaction.reply({ content: '❌ ليس لديك صلاحية إدارة تحذيرات العسكري. يجب أن تحمل رتبة مسؤول الشرطة.', ephemeral: true });
+          return;
+        }
+        
         const modal = new ModalBuilder()
           .setCustomId('modal_manage_military_warnings')
           .setTitle('إدارة تحذيرات العسكري');
@@ -4130,7 +4056,7 @@ client.on('interactionCreate', async interaction => {
         return;
       }
       const selected = interaction.values[0];
-      if (selected === 'reset_police') {
+      if (selected === 'reset_police' || selected === 'reset_page') {
         // إعادة نفس القائمة (تحديث الصفحة فقط)
         const embed = new EmbedBuilder()
           .setTitle('الشرطة')
@@ -4583,7 +4509,7 @@ client.on('interactionCreate', async interaction => {
         .setColor('#00ff00');
       const guildIdentities = identities.filter(i => i.guildId === interaction.guildId);
       const page = 1;
-      const pageSize = 22;
+      const pageSize = 23;
       const totalPages = Math.ceil(guildIdentities.length / pageSize) || 1;
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -4898,9 +4824,9 @@ client.on('interactionCreate', async interaction => {
         ctx.fillText('بطاقة الهوية الرسمية', cardWidth / 2, 35);
         if (avatarURL) {
           const avatar = await loadImage(avatarURL);
-          const avatarSize = 120;
-          const avatarX = 50;
-          const avatarY = 80;
+          const avatarSize = 150;
+          const avatarX = 70;
+          const avatarY = 140;
           ctx.fillStyle = '#e5e7eb';
           ctx.beginPath();
           ctx.arc(avatarX + avatarSize/2, avatarY + avatarSize/2, avatarSize/2 + 5, 0, Math.PI * 2);
@@ -4914,18 +4840,6 @@ client.on('interactionCreate', async interaction => {
           ctx.restore();
         }
         ctx.fillStyle = '#1f2937';
-        ctx.font = 'bold 16px Arial';
-        ctx.textAlign = 'right';
-        const labels = [
-          { text: 'الاسم الكامل', y: 100 },
-          { text: 'المدينة', y: 140 },
-          { text: 'تاريخ الميلاد', y: 180 },
-          { text: 'الجنسية', y: 220 },
-          { text: 'رقم الهوية', y: 260 }
-        ];
-        labels.forEach(label => {
-          ctx.fillText(label.text, 280, label.y);
-        });
         ctx.textAlign = 'left';
         ctx.font = '16px Arial';
         ctx.fillText(found.fullName, 300, 100);
@@ -4940,11 +4854,10 @@ client.on('interactionCreate', async interaction => {
         ctx.fillText(genderText, 300, 220);
         ctx.fillText(found.nationalId, 300, 260);
         ctx.fillStyle = '#ffffff';
-        ctx.font = '16px Arial';
+        ctx.font = '24px Arial';
+        ctx.fillStyle = '#000000';
         ctx.textAlign = 'right';
-        ctx.fillText('تاريخ الإصدار :', cardWidth - 20, cardHeight - 20);
-        ctx.textAlign = 'left';
-        ctx.fillText(birthTextAr, 20, cardHeight - 20);
+        ctx.fillText(birthTextAr, 427, 326);
         ctx.fillStyle = '#fbbf24';
         ctx.beginPath();
         ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
@@ -6759,7 +6672,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       // جلب جميع السيرفرات التي يوجد فيها البوت
       const guilds = client.guilds.cache.map(g => g);
       const page = 1;
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(guilds.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -6808,7 +6721,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       if (selectedValue.startsWith('premium_page_')) {
         const page = parseInt(selectedValue.replace('premium_page_', ''));
         const guilds = client.guilds.cache.map(g => g);
-        const pageSize = 10;
+        const pageSize = 23;
         const totalPages = Math.ceil(guilds.length / pageSize);
         const start = (page - 1) * pageSize;
         const end = start + pageSize;
@@ -6987,7 +6900,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       // العودة لقائمة السيرفرات
       const guilds = client.guilds.cache.map(g => g);
       const page = 1;
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(guilds.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -7594,7 +7507,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
           .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }))
           .addFields(
             { name: '👤 **المعلومات الشخصية**', value: `**الاسم:** ${foundIdentity.fullName}\n**الرقم الوطني:** ${foundIdentity.nationalId}\n**المستخدم:** ${targetUser}`, inline: false },
-            { name: '🎖️ **المعلومات العسكرية**', value: `**الرتبة:** ${militaryUser?.rank || 'عسكري'}\n**النقاط العسكرية:** ${points} نقطة`, inline: false },
+            { name: '🎖️ **المعلومات العسكرية**', value: `**الرتبة:** ${militaryUser?.rank || 'مستجد'}\n**النقاط العسكرية:** ${points} نقطة`, inline: false },
             { name: '🔐 **الكود العسكري**', value: militaryCode ? `\`${militaryCode}\`` : '**لا يوجد كود عسكري**', inline: false }
           )
           .setTimestamp();
@@ -7804,7 +7717,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         const targetUser = await client.users.fetch(userId);
         const identity = identities.find(id => id.userId === userId && id.guildId === guildId);
         const currentUser = getMilitaryUser(userId, guildId);
-        const oldRank = currentUser?.rank || 'عسكري';
+        const oldRank = currentUser?.rank || 'مستجد';
         
         // تحديث الرتبة العسكرية
         addOrUpdateMilitaryUser(userId, guildId, {
@@ -7994,7 +7907,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       try {
         const targetUser = await client.users.fetch(userId);
         const identity = identities.find(id => id.userId === userId && id.guildId === guildId);
-        const currentRank = getMilitaryUser(userId, guildId)?.rank || 'عسكري';
+        const currentRank = getMilitaryUser(userId, guildId)?.rank || 'مستجد';
         
         const modal = new ModalBuilder()
           .setCustomId(`modal_add_military_rank_${userId}`)
