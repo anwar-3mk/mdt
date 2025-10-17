@@ -3,35 +3,14 @@ const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, Permission
 const config = require('./config');
 const fs = require('fs');
 const path = require('path');
-// دعم مسار قابل للتهيئة لتخزين دائم عبر متغير بيئة DATA_DIR (مثلاً مسار قرص دائم في Render)
-const DATA_DIR = process.env.DATA_DIR || __dirname;
-// إنشاء المجلد إذا لم يكن موجودًا
-try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (_) {}
-const DATA_FILE = path.join(DATA_DIR, 'data.json');
-// ترحيل تلقائي: إذا لم يوجد الملف في القرص الدائم وكان موجودًا بجانب التطبيق، انسخه مرة واحدة
-try {
-  const DEFAULT_DATA_FILE = path.join(__dirname, 'data.json');
-  if (!fs.existsSync(DATA_FILE) && fs.existsSync(DEFAULT_DATA_FILE)) {
-    fs.copyFileSync(DEFAULT_DATA_FILE, DATA_FILE);
-  }
-} catch (_) {}
+const DATA_FILE = path.join(__dirname, 'data.json');
 const { createCanvas, loadImage } = require('canvas');
 // كاش بسيط للصور لتقليل التحميل المتكرر
 let cachedTemplateImage = null;
 const avatarCache = new Map(); // key: url, value: { img, at }
 const AVATAR_CACHE_TTL_MS = 30 * 1000; // 30 ثانية
 const { generateMilitaryPageImage } = require('./militaryImage');
-
-// --- MongoDB (Mongoose) persistence ---
-let mongoose = null;
-let State = null;
-try {
-  mongoose = require('mongoose');
-  const stateSchema = new mongoose.Schema({ key: { type: String, unique: true } }, { strict: false });
-  State = mongoose.models.MDTState || mongoose.model('MDTState', stateSchema);
-} catch (_) {
-  // mongoose غير مثبت في بيئة التطوير المحلية أو لم يتم تثبيته بعد
-}
+const { loadState, saveState } = require('./db/state');
 
 // تحميل بيانات الهويات من الملف عند بدء التشغيل
 let identities = [];
@@ -73,36 +52,7 @@ const DEVELOPER_IDS = [
 let guildSettings = {};
 
 try {
-  // إذا توفر Mongo، حمّل الحالة منه أولًا
-  let mongoLoaded = false;
-  if (mongoose && process.env.MONGODB_URI) {
-    try {
-      await (async () => {
-        if (mongoose.connection.readyState === 0) {
-          await mongoose.connect(process.env.MONGODB_URI, { dbName: process.env.MONGODB_DB || undefined });
-        }
-        const doc = await State.findOne({ key: 'mdt' }).lean();
-        if (doc) {
-          identities = doc.identities || [];
-          pendingRequests = doc.pendingRequests || [];
-          botStatus = doc.botStatus || 'online';
-          originalBotName = doc.originalBotName || '';
-          militaryData = doc.militaryData || { users: {}, codes: {}, points: {} };
-          pendingMilitaryCodeRequests = doc.pendingMilitaryCodeRequests || [];
-          militaryActivePages = doc.militaryActivePages || [];
-          militaryUsers = doc.militaryUsers || {};
-          militaryWarnings = doc.militaryWarnings || {};
-          guildSettings = doc.guildSettings || {};
-          premiumServers = new Set(doc.premiumServers || []);
-          mongoLoaded = true;
-        }
-      })();
-    } catch (_) {
-      // إذا فشل التحميل من مونغو نرجع للملف
-    }
-  }
-
-  if (!mongoLoaded && fs.existsSync(DATA_FILE)) {
+  if (fs.existsSync(DATA_FILE)) {
     const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     identities = data.identities || [];
     pendingRequests = data.pendingRequests || [];
@@ -116,7 +66,7 @@ try {
     guildSettings = data.guildSettings || {}; // تحميل إعدادات السيرفرات
     premiumServers = new Set(data.premiumServers || []); // تحميل السيرفرات المميزة
   }
-  } catch (e) {
+} catch (e) {
   identities = [];
   pendingRequests = [];
   botStatus = 'online'; // الحالة الافتراضية
@@ -134,9 +84,7 @@ try {
 
 // دالة حفظ موحدة لكل البيانات
 function saveAllData() {
-  // حفظ ذري لمنع تلف الملف عند الإنهاء المفاجئ
-  const tmpFile = DATA_FILE + '.tmp';
-  fs.writeFileSync(tmpFile, JSON.stringify({
+  const snapshot = {
     identities,
     pendingRequests,
     guildSettings,
@@ -147,25 +95,42 @@ function saveAllData() {
     militaryActivePages,
     militaryUsers,
     militaryWarnings
-  }, null, 2), 'utf8');
-  fs.renameSync(tmpFile, DATA_FILE);
-  // حفظ غير متزامن إلى Mongo (إن وُجد)
-  if (mongoose && mongoose.connection && mongoose.connection.readyState === 1) {
-    const data = {
-      key: 'mdt',
-      identities,
-      pendingRequests,
-      guildSettings,
-      botStatus,
-      originalBotName,
-      militaryData,
-      pendingMilitaryCodeRequests,
-      militaryActivePages,
-      militaryUsers,
-      militaryWarnings,
-      premiumServers: Array.from(premiumServers)
-    };
-    State.updateOne({ key: 'mdt' }, data, { upsert: true }).catch(() => {});
+  };
+  // Persist to Neon if configured (async, fire-and-forget)
+  if (process.env.DATABASE_URL) {
+    saveState(snapshot).catch((e) => console.error('DB save failed:', e));
+  }
+  // Also keep a local backup JSON for safety/debugging
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(snapshot, null, 2), 'utf8');
+  } catch (_) {
+    // ignore file write issues on read-only environments
+  }
+}
+
+// تحميل الحالة من قاعدة البيانات إن توفرَت
+async function initStateFromDatabaseIfAvailable() {
+  if (!process.env.DATABASE_URL) return;
+  try {
+    const data = await loadState();
+    if (data && Object.keys(data).length > 0) {
+      identities = data.identities || [];
+      pendingRequests = data.pendingRequests || [];
+      guildSettings = data.guildSettings || {};
+      botStatus = data.botStatus || 'online';
+      originalBotName = data.originalBotName || '';
+      militaryData = data.militaryData || { users: {}, codes: {}, points: {} };
+      pendingMilitaryCodeRequests = data.pendingMilitaryCodeRequests || [];
+      militaryActivePages = data.militaryActivePages || [];
+      militaryUsers = data.militaryUsers || {};
+      militaryWarnings = data.militaryWarnings || {};
+      try {
+        fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
+      } catch (_) {}
+      console.log('✅ Loaded state from database');
+    }
+  } catch (e) {
+    console.error('⚠️ Failed to load state from DB, continuing with file/defaults:', e.message);
   }
 }
 
@@ -778,24 +743,6 @@ process.on('uncaughtException', (error) => {
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
-// حفظ البيانات عند إيقاف الخدمة (ريستارت/إغلاق)
-function gracefulShutdown(signal) {
-  try {
-    console.log(`⚠️ Received ${signal}. Saving data before exit...`);
-    saveAllData();
-  } catch (e) {
-    console.error('❌ Error while saving data on shutdown:', e);
-  } finally {
-    process.exit(0);
-  }
-}
-
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('beforeExit', () => {
-  try { saveAllData(); } catch (_) {}
 });
 
 const client = new Client({
@@ -8424,11 +8371,12 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
 });
 
 // تسجيل الدخول مع معالجة الأخطاء (في النهاية الصحيحة)
-console.log('🔐 Attempting to login to Discord...');
-client.login(config.DISCORD_TOKEN).then(() => {
-  console.log('✅ Login attempt completed successfully');
-}).catch(error => {
-  console.error('❌ Failed to login to Discord:', error);
-  console.error('❌ Error details:', error.message);
-  process.exit(1); // إيقاف العملية إذا فشل تسجيل الدخول
+console.log('🔐 Initializing database state then logging in...');
+(async () => {
+  await initStateFromDatabaseIfAvailable();
+  await client.login(config.DISCORD_TOKEN);
+  console.log('✅ Discord login successful');
+})().catch(error => {
+  console.error('❌ Startup failed:', error);
+  process.exit(1);
 });
