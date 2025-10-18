@@ -6642,6 +6642,207 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       return;
     }
 
+    // معالجة إدارة قاعدة البوت
+    if (interaction.isStringSelectMenu() && interaction.customId === 'dev_menu' && interaction.values[0] === 'database_management') {
+      // تحقق من أن المستخدم مطور مصرح له
+      if (!isDeveloper(interaction.user.id)) {
+        await interaction.reply({ 
+          content: '❌ هذا الأمر مخصص فقط للمطورين المصرح لهم.', 
+          ephemeral: true 
+        });
+        return;
+      }
+      
+      // قائمة منسدلة بأوامر إدارة قاعدة البيانات
+      const dbOptions = [
+        { label: 'حذف مخالفات قديمة', value: 'cleanup_violations', description: 'حذف المخالفات المسددة الأقدم من 6 أشهر' },
+        { label: 'ضغط قاعدة البيانات', value: 'vacuum_database', description: 'ضغط وتحسين قاعدة البيانات' },
+        { label: 'عرض الإحصائيات', value: 'show_stats', description: 'عرض إحصائيات قاعدة البيانات' },
+        { label: 'حذف هوية', value: 'delete_identity', description: 'حذف هوية شخص معين' }
+      ];
+      
+      const dbMenu = new StringSelectMenuBuilder()
+        .setCustomId('db_management_menu')
+        .setPlaceholder('اختر إجراء إدارة قاعدة البيانات...')
+        .addOptions(dbOptions);
+      
+      const row = new ActionRowBuilder().addComponents(dbMenu);
+      
+      const embed = new EmbedBuilder()
+        .setTitle('🗄️ إدارة قاعدة البوت')
+        .setDescription('مرحباً بك في مركز إدارة قاعدة البيانات. اختر من القائمة أدناه الإجراء المطلوب.')
+        .addFields(
+          { name: '📊 الإحصائيات الحالية', value: `**عدد الهويات:** ${identities.length}\n**عدد المخالفات:** ${identities.reduce((sum, i) => sum + (i.violations?.length || 0), 0)}\n**عدد الجرائم:** ${identities.reduce((sum, i) => sum + (i.crimes?.length || 0), 0)}\n**الطلبات المعلقة:** ${pendingRequests.length}`, inline: false }
+        )
+        .setColor('#ff6b6b')
+        .setTimestamp();
+      
+      await interaction.update({ embeds: [embed], components: [row] });
+      return;
+    }
+
+    // معالجة قائمة إدارة قاعدة البيانات
+    if (interaction.isStringSelectMenu() && interaction.customId === 'db_management_menu') {
+      // تحقق من أن المستخدم مطور مصرح له
+      if (!isDeveloper(interaction.user.id)) {
+        await interaction.reply({ 
+          content: '❌ هذا الأمر مخصص فقط للمطورين المصرح لهم.', 
+          ephemeral: true 
+        });
+        return;
+      }
+
+      const selectedValue = interaction.values[0];
+      
+      try {
+        if (selectedValue === 'cleanup_violations') {
+          // حذف المخالفات المسددة الأقدم من 6 أشهر
+          const sixMonthsAgo = new Date();
+          sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+          
+          let deletedCount = 0;
+          for (const identity of identities) {
+            if (identity.violations) {
+              const originalLength = identity.violations.length;
+              identity.violations = identity.violations.filter(v => 
+                v.status !== 'مسددة' || new Date(v.date) > sixMonthsAgo
+              );
+              deletedCount += originalLength - identity.violations.length;
+            }
+          }
+          
+          await logDeveloperAction(interaction.user.id, 'حذف مخالفات قديمة', `${deletedCount} مخالفة`);
+          await interaction.reply({ 
+            content: `✅ تم حذف ${deletedCount} مخالفة قديمة مسددة.`, 
+            ephemeral: true 
+          });
+          saveAllData();
+          
+        } else if (selectedValue === 'vacuum_database') {
+          // ضغط الجداول في قاعدة البيانات
+          if (process.env.DATABASE_URL) {
+            await pool.query('VACUUM ANALYZE');
+            await logDeveloperAction(interaction.user.id, 'ضغط قاعدة البيانات', 'تم بنجاح');
+            await interaction.reply({ 
+              content: '✅ تم ضغط قاعدة البيانات بنجاح.', 
+              ephemeral: true 
+            });
+          } else {
+            await interaction.reply({ 
+              content: '⚠️ قاعدة البيانات غير متصلة.', 
+              ephemeral: true 
+            });
+          }
+          
+        } else if (selectedValue === 'show_stats') {
+          // عرض إحصائيات قاعدة البيانات
+          let dbSize = 'غير متاح';
+          if (process.env.DATABASE_URL) {
+            try {
+              const sizeResult = await pool.query("SELECT pg_size_pretty(pg_database_size(current_database())) as size");
+              dbSize = sizeResult.rows[0].size;
+            } catch (error) {
+              dbSize = 'خطأ في جلب الحجم';
+            }
+          }
+          
+          // عدد الهويات
+          const identityCount = identities.length;
+          
+          // عدد المخالفات
+          const violationCount = identities.reduce((sum, i) => sum + (i.violations?.length || 0), 0);
+          
+          // عدد الجرائم
+          const crimeCount = identities.reduce((sum, i) => sum + (i.crimes?.length || 0), 0);
+          
+          // عدد الطلبات المعلقة
+          const pendingCount = pendingRequests.length;
+          
+          const embed = new EmbedBuilder()
+            .setTitle('📊 إحصائيات قاعدة البيانات')
+            .addFields(
+              { name: 'حجم قاعدة البيانات', value: dbSize, inline: true },
+              { name: 'عدد الهويات', value: identityCount.toString(), inline: true },
+              { name: 'عدد المخالفات', value: violationCount.toString(), inline: true },
+              { name: 'عدد الجرائم', value: crimeCount.toString(), inline: true },
+              { name: 'الطلبات المعلقة', value: pendingCount.toString(), inline: true },
+              { name: 'السيرفرات المتصلة', value: client.guilds.cache.size.toString(), inline: true }
+            )
+            .setColor('#00ff00')
+            .setTimestamp();
+          
+          await logDeveloperAction(interaction.user.id, 'عرض إحصائيات قاعدة البيانات');
+          await interaction.reply({ embeds: [embed], ephemeral: true });
+          
+        } else if (selectedValue === 'delete_identity') {
+          // طلب الرقم الوطني لحذف الهوية
+          const modal = new ModalBuilder()
+            .setCustomId('delete_identity_modal')
+            .setTitle('حذف هوية شخص');
+          
+          const nationalIdInput = new TextInputBuilder()
+            .setCustomId('national_id_input')
+            .setLabel('الرقم الوطني للشخص')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('أدخل الرقم الوطني...')
+            .setRequired(true);
+          
+          const row = new ActionRowBuilder().addComponents(nationalIdInput);
+          modal.addComponents(row);
+          
+          await interaction.showModal(modal);
+        }
+        
+      } catch (error) {
+        console.error('خطأ في إدارة قاعدة البيانات:', error);
+        await logDeveloperAction(interaction.user.id, 'خطأ في إدارة قاعدة البيانات', error.message);
+        await interaction.reply({ 
+          content: `❌ حدث خطأ: ${error.message}`, 
+          ephemeral: true 
+        });
+      }
+      return;
+    }
+
+    // معالجة مودال حذف الهوية
+    if (interaction.isModalSubmit() && interaction.customId === 'delete_identity_modal') {
+      // تحقق من أن المستخدم مطور مصرح له
+      if (!isDeveloper(interaction.user.id)) {
+        await interaction.reply({ 
+          content: '❌ هذا الأمر مخصص فقط للمطورين المصرح لهم.', 
+          ephemeral: true 
+        });
+        return;
+      }
+
+      const nationalId = interaction.fields.getTextInputValue('national_id_input');
+      
+      // البحث عن الهوية
+      const identityIndex = identities.findIndex(i => i.nationalId === nationalId);
+      
+      if (identityIndex === -1) {
+        await interaction.reply({ 
+          content: '❌ لم يتم العثور على هوية بهذا الرقم الوطني.', 
+          ephemeral: true 
+        });
+        return;
+      }
+      
+      const identity = identities[identityIndex];
+      const identityInfo = `${identity.fullName} (${identity.nationalId})`;
+      
+      // حذف الهوية
+      identities.splice(identityIndex, 1);
+      
+      await logDeveloperAction(interaction.user.id, 'حذف هوية', identityInfo);
+      await interaction.reply({ 
+        content: `✅ تم حذف هوية ${identityInfo} بنجاح.`, 
+        ephemeral: true 
+      });
+      saveAllData();
+      return;
+    }
+
     // معالجة اختيار سيرفر محدد من قائمة البريميوم
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('premium_guilds_page_')) {
       if (!isDeveloper(interaction.user.id)) {
