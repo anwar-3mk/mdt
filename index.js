@@ -2993,12 +2993,18 @@ client.on('interactionCreate', async interaction => {
         ctx.textAlign = 'right';
         ctx.font = '24px Arial';
         ctx.fillText(identity.fullName, 475, 162);
-        ctx.font = '24px Arial';
-        ctx.fillText(identity.city, 475, 210);
         const monthNames = {
           '1': 'يناير', '2': 'فبراير', '3': 'مارس', '4': 'أبريل', '5': 'مايو', '6': 'يونيو',
           '7': 'يوليو', '8': 'أغسطس', '9': 'سبتمبر', '10': 'أكتوبر', '11': 'نوفمبر', '12': 'ديسمبر'
         };
+        const cityNames = {
+          'los_santos': 'لوس سانتوس',
+          'sandy_shore': 'ساندي شور',
+          'paleto': 'بوليتو'
+        };
+        const city = cityNames[identity.city] || identity.city;
+        ctx.font = '24px Arial';
+        ctx.fillText(city, 475, 210);
         const birthTextAr = `${identity.day} / ${monthNames[identity.month] || identity.month} / ${identity.year}`;
         ctx.textAlign = 'right';
         ctx.font = '24px Arial';
@@ -3015,18 +3021,10 @@ client.on('interactionCreate', async interaction => {
         ctx.font = '24px Arial';
         ctx.textAlign = 'right';
         ctx.fillText(birthTextAr, 445, 345);
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#1e3a8a';
-        ctx.font = 'bold 14px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('MDT', 50, cardHeight - 75);
         const buffer = canvas.toBuffer('image/png', { compressionLevel: 9 });
         const embed = new EmbedBuilder()
           .setTitle('بطاقتك الشخصية')
-          .setDescription(`**الاسم:** ${identity.fullName}\n**المدينة:** ${identity.city}\n**تاريخ الميلاد:** ${birthTextAr}\n**الجنس:** ${genderText}\n**رقم الهوية:** ${identity.nationalId}`)
+          .setDescription(`**الاسم:** ${identity.fullName}\n**المدينة:** ${city}\n**تاريخ الميلاد:** ${birthTextAr}\n**الجنس:** ${genderText}\n**رقم الهوية:** ${identity.nationalId}`)
           .setColor('#00ff00')
           .setImage('attachment://id_card.png');
         await interaction.reply({ embeds: [embed], files: [{ attachment: buffer, name: 'id_card.png' }], ephemeral: true });
@@ -3088,14 +3086,6 @@ client.on('interactionCreate', async interaction => {
           ctx.fillStyle = '#ff0000';
           ctx.textAlign = 'center';
           ctx.fillText('لايوجد مخالفات', cardWidth/2, cardHeight/2);
-          ctx.fillStyle = '#fbbf24';
-          ctx.beginPath();
-          ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = '#1e3a8a';
-          ctx.font = 'bold 14px Arial';
-          ctx.textAlign = 'center';
-          ctx.fillText('MDT', 50, cardHeight - 75);
           const buffer = canvas.toBuffer('image/png');
           const embed = new EmbedBuilder()
             .setTitle('مخالفاتك')
@@ -3131,14 +3121,6 @@ client.on('interactionCreate', async interaction => {
           ctx.fillStyle = '#222';
           ctx.fillText(v.desc || '', 350, y+25);
         }
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#1e3a8a';
-        ctx.font = 'bold 14px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('MDT', 50, cardHeight - 75);
         const buffer = canvas.toBuffer('image/png');
         const customImage = guildSettings[interaction.guildId]?.customEmbedImage;
         const embed = new EmbedBuilder()
@@ -3217,14 +3199,6 @@ client.on('interactionCreate', async interaction => {
           ctx.fillStyle = '#ff0000';
           ctx.textAlign = 'center';
           ctx.fillText('لايوجد مخالفات في هذه الصفحة', cardWidth/2, cardHeight/2);
-          ctx.fillStyle = '#fbbf24';
-          ctx.beginPath();
-          ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = '#1e3a8a';
-          ctx.font = 'bold 14px Arial';
-          ctx.textAlign = 'center';
-          ctx.fillText('MDT', 50, cardHeight - 75);
           const buffer = canvas.toBuffer('image/png');
           const embed = new EmbedBuilder()
             .setTitle(`مخالفاتك (صفحة ${page})`)
@@ -3254,14 +3228,6 @@ client.on('interactionCreate', async interaction => {
           ctx.fillStyle = v.status === 'مسددة' ? '#00ff00' : '#ff0000';
           ctx.fillText(v.status, 170, y+boxHeight-10);
         }
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#1e3a8a';
-        ctx.font = 'bold 14px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('MDT', 50, cardHeight - 75);
         const buffer = canvas.toBuffer('image/png');
         const customImage = guildSettings[interaction.guildId]?.customEmbedImage;
         const embed = new EmbedBuilder()
@@ -4537,14 +4503,6 @@ client.on('interactionCreate', async interaction => {
           ctx.fillStyle = '#ff0000';
           ctx.textAlign = 'center';
           ctx.fillText('لايوجد مخالفات', cardWidth/2, cardHeight/2);
-          ctx.fillStyle = '#fbbf24';
-          ctx.beginPath();
-          ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = '#1e3a8a';
-          ctx.font = 'bold 14px Arial';
-          ctx.textAlign = 'center';
-          ctx.fillText('MDT', 50, cardHeight - 75);
           const buffer = canvas.toBuffer('image/png');
           await interaction.reply({ files: [{ attachment: buffer, name: 'violations_card.png' }], ephemeral: true });
           return;
@@ -4572,14 +4530,6 @@ client.on('interactionCreate', async interaction => {
           ctx.fillStyle = '#222';
           ctx.fillText(v.desc || '', 350, y+25);
         }
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#1e3a8a';
-        ctx.font = 'bold 14px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('MDT', 50, cardHeight - 75);
         const buffer = canvas.toBuffer('image/png');
         const customImage = guildSettings[interaction.guildId]?.customEmbedImage;
         const embed = new EmbedBuilder()
@@ -4660,14 +4610,6 @@ client.on('interactionCreate', async interaction => {
           ctx.fillStyle = '#ff0000';
           ctx.textAlign = 'center';
           ctx.fillText('لايوجد مخالفات في هذه الصفحة', cardWidth/2, cardHeight/2);
-          ctx.fillStyle = '#fbbf24';
-          ctx.beginPath();
-          ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = '#1e3a8a';
-          ctx.font = 'bold 14px Arial';
-          ctx.textAlign = 'center';
-          ctx.fillText('MDT', 50, cardHeight - 75);
           const buffer = canvas.toBuffer('image/png');
           const embed = new EmbedBuilder()
             .setTitle(`مخالفات الشخص (صفحة ${page})`)
@@ -4700,14 +4642,6 @@ client.on('interactionCreate', async interaction => {
           ctx.fillStyle = '#222';
           ctx.fillText(v.desc || '', 350, y+25);
         }
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#1e3a8a';
-        ctx.font = 'bold 14px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('MDT', 50, cardHeight - 75);
         const buffer = canvas.toBuffer('image/png');
         const customImage = guildSettings[interaction.guildId]?.customEmbedImage;
         const embed = new EmbedBuilder()
@@ -4757,16 +4691,16 @@ client.on('interactionCreate', async interaction => {
         const cardHeight = 400;
         const canvas = createCanvas(cardWidth, cardHeight);
         const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#f5f5f5';
-        ctx.fillRect(0, 0, cardWidth, cardHeight);
-        ctx.fillStyle = '#1e3a8a';
-        ctx.fillRect(0, 0, cardWidth, 60);
-        ctx.fillStyle = '#1e3a8a';
-        ctx.fillRect(0, cardHeight - 50, cardWidth, 50);
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 24px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('بطاقة الهوية الرسمية', cardWidth / 2, 35);
+        // استخدم قالب صورة البطاقة كخلفية مع كاش
+        try {
+          if (!cachedTemplateImage) {
+            cachedTemplateImage = await loadImage('2.png');
+          }
+          ctx.drawImage(cachedTemplateImage, 0, 0, cardWidth, cardHeight);
+        } catch (_) {
+          // في حال فشل تحميل القالب، اترك الخلفية فارغة بدون عناوين/أشرطة
+          ctx.clearRect(0, 0, cardWidth, cardHeight);
+        }
         if (avatarURL) {
           const avatar = await loadImage(avatarURL);
           const avatarSize = 150;
@@ -4784,33 +4718,36 @@ client.on('interactionCreate', async interaction => {
           ctx.drawImage(avatar, avatarX, avatarY, avatarSize, avatarSize);
           ctx.restore();
         }
-        ctx.fillStyle = '#1f2937';
-        ctx.textAlign = 'left';
-        ctx.font = '16px Arial';
-        ctx.fillText(found.fullName, 300, 100);
-        ctx.fillText(found.city, 300, 140);
         const monthNames = {
           '1': 'يناير', '2': 'فبراير', '3': 'مارس', '4': 'أبريل', '5': 'مايو', '6': 'يونيو',
           '7': 'يوليو', '8': 'أغسطس', '9': 'سبتمبر', '10': 'أكتوبر', '11': 'نوفمبر', '12': 'ديسمبر'
         };
-        const birthTextAr = `${found.day} / ${monthNames[found.month] || found.month} / ${found.year}`;
-        ctx.fillText(birthTextAr, 300, 180);
-        const genderText = found.gender === 'male' ? 'ذكر' : 'أنثى';
-        ctx.fillText(genderText, 300, 220);
-        ctx.fillText(found.nationalId, 300, 260);
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '24px Arial';
+        const cityNames = {
+          'los_santos': 'لوس سانتوس',
+          'sandy_shore': 'ساندي شور',
+          'paleto': 'بوليتو'
+        };
+
         ctx.fillStyle = '#000000';
         ctx.textAlign = 'right';
-        ctx.fillText(birthTextAr, 427, 326);
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.arc(50, cardHeight - 80, 25, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#1e3a8a';
-        ctx.font = 'bold 14px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('MDT', 50, cardHeight - 75);
+        ctx.font = '24px Arial';
+        ctx.fillText(found.fullName, 475, 162);
+        const city = cityNames[found.city] || found.city;
+        ctx.font = '24px Arial';
+        ctx.fillText(city, 475, 210);
+        const birthTextAr = `${found.day} / ${monthNames[found.month] || found.month} / ${found.year}`;
+        ctx.textAlign = 'right';
+        ctx.font = '24px Arial';
+        ctx.fillText(birthTextAr, 417, 250);
+        const genderText = found.gender === 'male' ? 'ذكر' : 'أنثى';
+        ctx.fillStyle = '#000000';
+        ctx.font = '26px Arial';
+        ctx.fillText(genderText, 462, 306);
+        // رقم الهوية أسفل اليسار
+        ctx.fillStyle = '#000000';
+        ctx.font = 'bold 20px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillText(found.nationalId, 50, cardHeight - 20);
         const buffer = canvas.toBuffer('image/png');
         // أزرار الإدارة
         const row1 = new ActionRowBuilder().addComponents(
@@ -4828,7 +4765,7 @@ client.on('interactionCreate', async interaction => {
         );
         const embed = new EmbedBuilder()
           .setTitle('هوية الشخص')
-          .setDescription(`**الاسم:** ${found.fullName}\n**المدينة:** ${found.city}\n**تاريخ الميلاد:** ${birthTextAr}\n**الجنس:** ${genderText}\n**رقم الهوية:** ${found.nationalId}`)
+          .setDescription(`**الاسم:** ${found.fullName}\n**المدينة:** ${city}\n**تاريخ الميلاد:** ${birthTextAr}\n**الجنس:** ${genderText}\n**رقم الهوية:** ${found.nationalId}`)
           .setColor('#00ff00')
           .setImage('attachment://id_card.png');
         await interaction.reply({ embeds: [embed], files: [{ attachment: buffer, name: 'id_card.png' }], components: [row1, row2], ephemeral: true });
