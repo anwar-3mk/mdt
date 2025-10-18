@@ -2184,7 +2184,7 @@ client.on('interactionCreate', async interaction => {
       const userId = interaction.user.id;
       
       // إنشاء طلب كود عسكري جديد
-      const requestId = Date.now().toString() + Math.random().toString().slice(2,8);
+      const requestId = Date.now().toString();
       const request = {
         requestId,
         userId,
@@ -2244,7 +2244,6 @@ client.on('interactionCreate', async interaction => {
         const reason = interaction.fields.getTextInputValue('accept_reason');
         
         console.log('🔍 معالجة قبول الكود العسكري:', requestId);
-        console.log('📋 طلبات الأكواد المعلقة:', pendingMilitaryCodeRequests.map(req => ({ requestId: req.requestId, fullName: req.fullName })));
         
         // البحث عن الطلب
         const requestIndex = pendingMilitaryCodeRequests.findIndex(req => req.requestId === requestId);
@@ -2339,7 +2338,6 @@ client.on('interactionCreate', async interaction => {
       const reason = interaction.fields.getTextInputValue('reject_reason');
       
         console.log('🔍 معالجة رفض الكود العسكري:', requestId);
-        console.log('📋 طلبات الأكواد المعلقة:', pendingMilitaryCodeRequests.map(req => ({ requestId: req.requestId, fullName: req.fullName })));
         
         // البحث عن الطلب
         const requestIndex = pendingMilitaryCodeRequests.findIndex(req => req.requestId === requestId);
@@ -7461,13 +7459,21 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         
         const buttons = [];
         
-        // زر تعديل الكود العسكري (فقط إذا كان لديه كود)
+        // زر تعديل أو إضافة الكود العسكري
         if (militaryCode) {
+          // إذا كان لديه كود، نعرض زر التعديل
           const editButton = new ButtonBuilder()
             .setCustomId(`edit_military_code_${userId}`)
             .setLabel('✏️ تعديل الكود العسكري')
             .setStyle(ButtonStyle.Primary);
           buttons.push(editButton);
+        } else {
+          // إذا لم يكن لديه كود، نعرض زر الإضافة
+          const addButton = new ButtonBuilder()
+            .setCustomId(`add_military_code_${userId}`)
+            .setLabel('➕ إضافة كود عسكري')
+            .setStyle(ButtonStyle.Success);
+          buttons.push(addButton);
         }
         
         // زر إضافة رتبة عسكرية
@@ -7578,6 +7584,81 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         
       } catch (e) {
         await interaction.reply({ content: '❌ خطأ في تعديل الكود العسكري.', ephemeral: true });
+      }
+      return;
+    }
+
+    // معالج مودال إضافة الكود العسكري
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_add_military_code_')) {
+      const userId = interaction.customId.replace('modal_add_military_code_', '');
+      const newCode = interaction.fields.getTextInputValue('input_new_military_code');
+      const guildId = interaction.guildId;
+      
+      if (!newCode || newCode.trim() === '') {
+        await interaction.reply({ content: '❌ يرجى إدخال كود عسكري صحيح.', ephemeral: true });
+        return;
+      }
+      
+      try {
+        const targetUser = await client.users.fetch(userId);
+        const identity = identities.find(id => id.userId === userId && id.guildId === guildId);
+        const oldCode = getMilitaryCode(userId, guildId);
+        
+        // إضافة الكود العسكري
+        setMilitaryCode(userId, guildId, newCode);
+        
+        // تحديث الكود في militaryUsers أيضاً
+        if (militaryUsers[userId]) {
+          militaryUsers[userId].code = newCode;
+          militaryUsers[userId].lastUpdate = new Date().toISOString();
+          saveAllData();
+        }
+        
+        // تحديث الصورة في روم مباشرة العسكر
+        await updateMilitaryPageImage(guildId);
+        
+        const embed = new EmbedBuilder()
+          .setTitle('✅ تم إضافة الكود العسكري بنجاح')
+          .setDescription('**تم إضافة الكود العسكري رسمياً!**')
+          .setColor('#00ff00')
+          .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }))
+          .addFields(
+            { name: '👤 **المعلومات الشخصية**', value: `**الاسم:** ${identity?.fullName || 'غير محدد'}\n**الرقم الوطني:** ${identity?.nationalId || 'غير محدد'}\n**المستخدم:** ${targetUser}`, inline: false },
+            { name: '🔐 **الكود العسكري**', value: `**الكود القديم:** \`${oldCode || 'غير محدد'}\`\n**الكود الجديد:** \`${newCode}\``, inline: false },
+            { name: '👮 **تم الإضافة بواسطة**', value: `${interaction.user}`, inline: false }
+          )
+          .setTimestamp();
+        
+        await interaction.reply({ embeds: [embed], ephemeral: true });
+        
+        // إرسال لوق في روم اللوق
+        const logChannelId = guildSettings[guildId]?.logChannelId;
+        if (logChannelId) {
+          try {
+            const logChannel = interaction.guild.channels.cache.get(logChannelId);
+            if (logChannel) {
+              const logEmbed = new EmbedBuilder()
+                .setTitle('➕ تم إضافة كود عسكري')
+                .setDescription(`**المستخدم:** <@${userId}> (${targetUser.username})\n**الاسم:** ${identity?.fullName || 'غير محدد'}\n**الكود القديم:** \`${oldCode || 'غير محدد'}\`\n**الكود الجديد:** \`${newCode}\`\n**تم الإضافة بواسطة:** ${interaction.user}`)
+                .setColor('#00ff00')
+                .setTimestamp();
+              
+              await logChannel.send({ embeds: [logEmbed] });
+            }
+          } catch (e) { /* تجاهل الخطأ */ }
+        }
+        // إرسال رسالة للشخص في الخاص
+        try {
+          const userEmbed = new EmbedBuilder()
+            .setTitle('➕ تم إضافة كودك العسكري!')
+            .setDescription(`**مرحباً ${targetUser.username}!**\n\nتم إضافة كودك العسكري من قبل المسؤول!\n\n**الكود الجديد:** \`${newCode}\`\n**تم الإضافة بواسطة:** ${interaction.user}`)
+            .setColor('#00ff00')
+            .setTimestamp();
+          await targetUser.send({ embeds: [userEmbed] });
+        } catch (err) { /* تجاهل الخطأ */ }
+        
+      } catch (e) {
+        await interaction.reply({ content: '❌ خطأ في إضافة الكود العسكري.', ephemeral: true });
       }
       return;
     }
@@ -7839,6 +7920,40 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         const row = new ActionRowBuilder().addComponents(codeInput);
         modal.addComponents(row);
         
+        await interaction.showModal(modal);
+      } catch (e) {
+        await interaction.reply({ content: '❌ خطأ في جلب معلومات المستخدم.', ephemeral: true });
+      }
+      return;
+    }
+
+    // معالج زر إضافة كود عسكري
+    if (interaction.isButton() && interaction.customId.startsWith('add_military_code_')) {
+      if (!hasPoliceAdminRole(interaction.member, interaction.guildId)) {
+        await interaction.reply({ content: '❌ ليس لديك صلاحية إضافة أكواد عسكرية.', ephemeral: true });
+        return;
+      }
+      
+      const userId = interaction.customId.replace('add_military_code_', '');
+      const guildId = interaction.guildId;
+      
+      try {
+        const targetUser = await client.users.fetch(userId);
+        const identity = identities.find(id => id.userId === userId && id.guildId === guildId);
+        
+        const modal = new ModalBuilder()
+          .setCustomId(`modal_add_military_code_${userId}`)
+          .setTitle('إضافة كود عسكري');
+        
+        const codeInput = new TextInputBuilder()
+          .setCustomId('input_new_military_code')
+          .setLabel('الكود العسكري الجديد')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('اكتب الكود العسكري...')
+          .setRequired(true);
+        
+        const modalRow = new ActionRowBuilder().addComponents(codeInput);
+        modal.addComponents(modalRow);
         await interaction.showModal(modal);
       } catch (e) {
         await interaction.reply({ content: '❌ خطأ في جلب معلومات المستخدم.', ephemeral: true });
