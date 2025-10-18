@@ -43,10 +43,26 @@ let militaryWarnings = {}; // { guildId: { userId: [{ id, warningNumber, reason,
 // قائمة المطورين المصرح لهم (أيدياتهم)
 const DEVELOPER_IDS = [
   '1337512375355707412', // المطور الأول
-  '1291805249815711826', // المطور الثاني  
-  '1355958988524622076', // المطور الثالث
-  '1319791882389164072'  // المطور الرابع
+  '1285652481434583173'  // المطور الثاني
 ];
+
+// دالة تسجيل عمليات المطورين
+async function logDeveloperAction(developerId, action, details = '') {
+  try {
+    const developer = await client.users.fetch(developerId).catch(() => null);
+    const developerName = developer ? developer.username : `Unknown (${developerId})`;
+    
+    console.log(`🔧 [DEVELOPER ACTION] ${developerName} (${developerId}): ${action} ${details ? '- ' + details : ''}`);
+    
+    // يمكن إضافة إرسال رسالة إلى قناة خاصة للمطورين هنا
+    // const logChannel = client.channels.cache.get('YOUR_LOG_CHANNEL_ID');
+    // if (logChannel) {
+    //   await logChannel.send(`🔧 **${developerName}** قام بـ: ${action} ${details ? '- ' + details : ''}`);
+    // }
+  } catch (error) {
+    console.error('خطأ في تسجيل عملية المطور:', error);
+  }
+}
 
 // --- إعدادات السيرفرات ---
 let guildSettings = {};
@@ -791,6 +807,37 @@ const commands = [
     .setName('مسح_الطلبات')
     .setDescription('حذف جميع الطلبات المعلقة - للأدمن فقط')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .toJSON(),
+  // إضافة أمر /تنظيف للمطورين
+  new SlashCommandBuilder()
+    .setName('تنظيف')
+    .setDescription('أوامر تنظيف وضغط قاعدة البيانات - للمطورين فقط')
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('مخالفات_قديمة')
+        .setDescription('حذف المخالفات المسددة الأقدم من 6 أشهر')
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('ضغط_قاعدة')
+        .setDescription('ضغط وتحسين قاعدة البيانات')
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('إحصائيات')
+        .setDescription('عرض إحصائيات قاعدة البيانات')
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('حذف_هوية')
+        .setDescription('حذف هوية شخص معين')
+        .addStringOption(option =>
+          option
+            .setName('الرقم_الوطني')
+            .setDescription('الرقم الوطني للشخص')
+            .setRequired(true)
+        )
+    )
     .toJSON()
 ];
 
@@ -6857,6 +6904,139 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       }
       return;
     }
+
+    // معالجة أمر /تنظيف للمطورين
+    if (interaction.isChatInputCommand() && interaction.commandName === 'تنظيف') {
+      // تحقق من أن المستخدم مطور مصرح له
+      if (!isDeveloper(interaction.user.id)) {
+        await interaction.reply({ 
+          content: '❌ هذا الأمر مخصص فقط للمطورين المصرح لهم.', 
+          ephemeral: true 
+        });
+        return;
+      }
+
+      const subcommand = interaction.options.getSubcommand();
+      
+      try {
+        if (subcommand === 'مخالفات_قديمة') {
+          // حذف المخالفات المسددة الأقدم من 6 أشهر
+          const sixMonthsAgo = new Date();
+          sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+          
+          let deletedCount = 0;
+          for (const identity of identities) {
+            if (identity.violations) {
+              const originalLength = identity.violations.length;
+              identity.violations = identity.violations.filter(v => 
+                v.status !== 'مسددة' || new Date(v.date) > sixMonthsAgo
+              );
+              deletedCount += originalLength - identity.violations.length;
+            }
+          }
+          
+          await logDeveloperAction(interaction.user.id, 'حذف مخالفات قديمة', `${deletedCount} مخالفة`);
+          await interaction.reply({ 
+            content: `✅ تم حذف ${deletedCount} مخالفة قديمة مسددة.`, 
+            ephemeral: true 
+          });
+          saveAllData();
+          
+        } else if (subcommand === 'ضغط_قاعدة') {
+          // ضغط الجداول في قاعدة البيانات
+          if (process.env.DATABASE_URL) {
+            await pool.query('VACUUM ANALYZE');
+            await logDeveloperAction(interaction.user.id, 'ضغط قاعدة البيانات', 'تم بنجاح');
+            await interaction.reply({ 
+              content: '✅ تم ضغط قاعدة البيانات بنجاح.', 
+              ephemeral: true 
+            });
+          } else {
+            await interaction.reply({ 
+              content: '⚠️ قاعدة البيانات غير متصلة.', 
+              ephemeral: true 
+            });
+          }
+          
+        } else if (subcommand === 'إحصائيات') {
+          // عرض إحصائيات قاعدة البيانات
+          let dbSize = 'غير متاح';
+          if (process.env.DATABASE_URL) {
+            try {
+              const sizeResult = await pool.query("SELECT pg_size_pretty(pg_database_size(current_database())) as size");
+              dbSize = sizeResult.rows[0].size;
+            } catch (error) {
+              dbSize = 'خطأ في جلب الحجم';
+            }
+          }
+          
+          // عدد الهويات
+          const identityCount = identities.length;
+          
+          // عدد المخالفات
+          const violationCount = identities.reduce((sum, i) => sum + (i.violations?.length || 0), 0);
+          
+          // عدد الجرائم
+          const crimeCount = identities.reduce((sum, i) => sum + (i.crimes?.length || 0), 0);
+          
+          // عدد الطلبات المعلقة
+          const pendingCount = pendingRequests.length;
+          
+          const embed = new EmbedBuilder()
+            .setTitle('📊 إحصائيات قاعدة البيانات')
+            .addFields(
+              { name: 'حجم قاعدة البيانات', value: dbSize, inline: true },
+              { name: 'عدد الهويات', value: identityCount.toString(), inline: true },
+              { name: 'عدد المخالفات', value: violationCount.toString(), inline: true },
+              { name: 'عدد الجرائم', value: crimeCount.toString(), inline: true },
+              { name: 'الطلبات المعلقة', value: pendingCount.toString(), inline: true },
+              { name: 'السيرفرات المتصلة', value: client.guilds.cache.size.toString(), inline: true }
+            )
+            .setColor('#00ff00')
+            .setTimestamp();
+          
+          await logDeveloperAction(interaction.user.id, 'عرض إحصائيات قاعدة البيانات');
+          await interaction.reply({ embeds: [embed], ephemeral: true });
+          
+        } else if (subcommand === 'حذف_هوية') {
+          const nationalId = interaction.options.getString('الرقم_الوطني');
+          
+          // البحث عن الهوية
+          const identityIndex = identities.findIndex(i => i.nationalId === nationalId);
+          
+          if (identityIndex === -1) {
+            await interaction.reply({ 
+              content: '❌ لم يتم العثور على هوية بهذا الرقم الوطني.', 
+              ephemeral: true 
+            });
+            return;
+          }
+          
+          const identity = identities[identityIndex];
+          const identityInfo = `${identity.fullName} (${identity.nationalId})`;
+          
+          // حذف الهوية
+          identities.splice(identityIndex, 1);
+          
+          await logDeveloperAction(interaction.user.id, 'حذف هوية', identityInfo);
+          await interaction.reply({ 
+            content: `✅ تم حذف هوية ${identityInfo} بنجاح.`, 
+            ephemeral: true 
+          });
+          saveAllData();
+        }
+        
+      } catch (error) {
+        console.error('خطأ في أمر التنظيف:', error);
+        await logDeveloperAction(interaction.user.id, 'خطأ في أمر التنظيف', error.message);
+        await interaction.reply({ 
+          content: `❌ حدث خطأ: ${error.message}`, 
+          ephemeral: true 
+        });
+      }
+      return;
+    }
+
     // عند الضغط على زر إيقاف | تشغيل البوت من معلومات السيرفر
     if (interaction.isButton() && interaction.customId.startsWith('toggle_bot_status_')) {
       // تحقق من أن المستخدم مطور مصرح له
@@ -8421,6 +8601,38 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
     console.error('خطأ في التعامل مع التفاعلات:', e);
   }
 });
+
+// إضافة التنظيف التلقائي كل أسبوع
+setInterval(async () => {
+  try {
+    // تنظيف تلقائي كل أسبوع
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    
+    let cleanedCount = 0;
+    for (const identity of identities) {
+      if (identity.violations) {
+        const originalLength = identity.violations.length;
+        identity.violations = identity.violations.filter(v => 
+          v.status !== 'مسددة' || new Date(v.date) > oneWeekAgo
+        );
+        cleanedCount += originalLength - identity.violations.length;
+      }
+    }
+    
+    if (cleanedCount > 0) {
+      console.log(`🧹 تنظيف تلقائي: تم حذف ${cleanedCount} مخالفة قديمة`);
+      saveAllData();
+    }
+  } catch (error) {
+    console.error('خطأ في التنظيف التلقائي:', error);
+  }
+}, 7 * 24 * 60 * 60 * 1000); // كل أسبوع
+
+console.log('✅ تم تحميل جميع المكونات بنجاح');
+console.log('🔧 أوامر التنظيف للمطورين جاهزة');
+console.log('📊 نظام تسجيل العمليات للمطورين مفعل');
+console.log('🧹 التنظيف التلقائي مفعل (كل أسبوع)');
 
 // تسجيل الدخول مع معالجة الأخطاء (في النهاية الصحيحة)
 console.log('🔐 Initializing database state then logging in...');
