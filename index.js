@@ -4790,11 +4790,19 @@ client.on('interactionCreate', async interaction => {
         ctx.fillStyle = '#000000';
         ctx.font = '26px Arial';
         ctx.fillText(genderText, 462, 306);
-        // رقم الهوية أسفل اليسار
+        // رقم الهوية أسفل اليسار (موضع محسن)
         ctx.fillStyle = '#000000';
         ctx.font = 'bold 20px Arial';
         ctx.textAlign = 'left';
-        ctx.fillText(found.nationalId, 50, cardHeight - 20);
+        ctx.fillText(found.nationalId, 50, cardHeight - 50);
+        
+        // تاريخ الإصدار أسفل اليمين
+        const issueDate = new Date(found.approvedAt || found.createdAt || Date.now());
+        const issueDateText = `${issueDate.getDate()} / ${monthNames[issueDate.getMonth() + 1]} / ${issueDate.getFullYear()}`;
+        ctx.fillStyle = '#000000';
+        ctx.font = '18px Arial';
+        ctx.textAlign = 'right';
+        ctx.fillText(`تاريخ الإصدار: ${issueDateText}`, cardWidth - 20, cardHeight - 20);
         const buffer = canvas.toBuffer('image/png');
         // أزرار الإدارة
         const row1 = new ActionRowBuilder().addComponents(
@@ -6882,7 +6890,8 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       const menuOptions = [
         { label: 'تغيير ايمبيد', value: 'change_embed', description: 'تغيير صورة الإمبد لجميع الأوامر في السيرفرات' },
         { label: 'إيقاف | تشغيل البوت', value: 'toggle_bot_status', description: 'إدارة حالة البوت في جميع السيرفرات' },
-        { label: 'البريميوم', value: 'premium_management', description: 'إدارة السيرفرات المميزة' }
+        { label: 'البريميوم', value: 'premium_management', description: 'إدارة السيرفرات المميزة' },
+        { label: 'إدارة قاعدة البوت', value: 'database_management', description: 'تنظيف وضغط قاعدة البيانات وإدارة البيانات' }
       ];
       const devMenu = new StringSelectMenuBuilder()
         .setCustomId('dev_menu')
