@@ -613,7 +613,7 @@ function updateMilitaryUserStatus(userId, guildId, status) {
 }
 
 // دالة لتحديث الصورة في روم مباشرة العسكر
-async function updateMilitaryPageImage(guildId, specificUserId = null) {
+async function updateMilitaryPageImage(guildId) {
   try {
     const directRoomId = guildSettings[guildId]?.directMilitaryRoomId;
     if (!directRoomId) return false;
@@ -627,27 +627,6 @@ async function updateMilitaryPageImage(guildId, specificUserId = null) {
     // جلب جميع العسكريين النشطين في هذا السيرفر
     const activeUsers = Object.values(militaryUsers).filter(user => user.guildId === guildId);
     
-    // إذا تم تحديد مستخدم معين، تحقق من وجوده في الصور المرسولة
-    if (specificUserId) {
-      const userExistsInPages = militaryActivePages.some(page => 
-        page.guildId === guildId && page.users && page.users.includes(specificUserId)
-      );
-      
-      // إذا لم يكن المستخدم موجود في أي صفحة، تحقق من وجود أي صور في السيرفر
-      if (!userExistsInPages) {
-        const hasAnyPagesInGuild = militaryActivePages.some(page => page.guildId === guildId);
-        
-        // إذا لم تكن هناك أي صفحات في السيرفر، هذا يعني أنه أول عسكري - أرسل الصورة
-        if (!hasAnyPagesInGuild) {
-          console.log(`المستخدم ${specificUserId} هو أول عسكري في السيرفر، سيتم إرسال الصورة`);
-        } else {
-          // إذا كانت هناك صفحات ولكن المستخدم غير موجود فيها، لا ترسل صورة
-          console.log(`المستخدم ${specificUserId} غير موجود في الصور المرسولة، لن يتم تحديث الصور`);
-          return false;
-        }
-      }
-    }
-    
     // حساب العدادات
     const counters = {
       in: activeUsers.filter(u => u.status === 'in').length,
@@ -656,7 +635,7 @@ async function updateMilitaryPageImage(guildId, specificUserId = null) {
     };
     
                         // تقسيم العسكريين إلى صفحات (10 عسكري لكل صفحة)
-                    const pageSize = 10;
+                    const pageSize = 23;
     const pages = [];
     for (let i = 0; i < activeUsers.length; i += pageSize) {
       pages.push(activeUsers.slice(i, i + pageSize));
@@ -2631,7 +2610,7 @@ client.on('interactionCreate', async interaction => {
       // إعادة بناء القائمة المنسدلة بنفس الأسماء (أول 22 هوية)
       const guildIdentities = identities.filter(i => i.guildId === interaction.guildId);
       const page = 1;
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(guildIdentities.length / pageSize) || 1;
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -2653,7 +2632,7 @@ client.on('interactionCreate', async interaction => {
     if (interaction.isStringSelectMenu() && interaction.customId === 'identity_select_menu_page_1' && interaction.values[0] === 'see_more_identities') {
       const guildIdentities = identities.filter(i => i.guildId === interaction.guildId);
       const page = 2; // الصفحة التالية
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(guildIdentities.length / pageSize) || 1;
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -3383,7 +3362,7 @@ client.on('interactionCreate', async interaction => {
         .setColor('#00ff00');
       const guildIdentities = identities.filter(i => i.guildId === interaction.guildId);
       const page = 1;
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(guildIdentities.length / pageSize) || 1;
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -3734,8 +3713,8 @@ client.on('interactionCreate', async interaction => {
           return;
         }
         
-        // تحديث الصورة في روم مباشرة العسكر (فقط إذا كان المستخدم موجود في الصور)
-        await updateMilitaryPageImage(guildId, interaction.user.id);
+        // تحديث الصورة في روم مباشرة العسكر
+        await updateMilitaryPageImage(guildId);
         
         const embed = new EmbedBuilder()
           .setTitle('✅ تم تسجيل الدخول بنجاح')
@@ -3773,8 +3752,8 @@ client.on('interactionCreate', async interaction => {
           return;
         }
         
-        // تحديث الصورة في روم مباشرة العسكر (فقط إذا كان المستخدم موجود في الصور)
-        await updateMilitaryPageImage(guildId, interaction.user.id);
+        // تحديث الصورة في روم مباشرة العسكر
+        await updateMilitaryPageImage(guildId);
         
         const embed = new EmbedBuilder()
           .setTitle('🔄 تم تسجيل الخروج بنجاح')
@@ -3812,8 +3791,8 @@ client.on('interactionCreate', async interaction => {
           return;
         }
         
-        // تحديث الصورة في روم مباشرة العسكر (فقط إذا كان المستخدم موجود في الصور)
-        await updateMilitaryPageImage(guildId, interaction.user.id);
+        // تحديث الصورة في روم مباشرة العسكر
+        await updateMilitaryPageImage(guildId);
         
         const embed = new EmbedBuilder()
           .setTitle('🏁 تم انهاء المناوبة بنجاح')
@@ -4488,7 +4467,7 @@ client.on('interactionCreate', async interaction => {
         .setColor('#00ff00');
       const guildIdentities = identities.filter(i => i.guildId === interaction.guildId);
       const page = 1;
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(guildIdentities.length / pageSize) || 1;
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -4868,7 +4847,7 @@ if (interaction.isButton() && interaction.customId.startsWith('delete_evidence_'
     return;
   }
   const page = 1;
-  const pageSize = 10;
+  const pageSize = 23;
   const totalPages = Math.ceil(crimesWithEvidence.length / pageSize);
   const start = (page - 1) * pageSize;
   const end = start + pageSize;
@@ -4908,7 +4887,7 @@ if (interaction.isStringSelectMenu() && interaction.customId.startsWith('delete_
     await interaction.reply({ content: 'لا توجد جرائم تحتوي على أدلة.', ephemeral: true });
     return;
   }
-  const pageSize = 10;
+  const pageSize = 23;
   const totalPages = Math.ceil(crimesWithEvidence.length / pageSize);
   const start = (page - 1) * pageSize;
   const end = start + pageSize;
@@ -5195,7 +5174,7 @@ if (interaction.isButton() && interaction.customId.startsWith('confirm_delete_ev
         await interaction.reply({ content: 'لا توجد مخالفات لهذا الشخص.', ephemeral: true });
         return;
       }
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(identity.violations.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -5230,7 +5209,7 @@ if (interaction.isButton() && interaction.customId.startsWith('confirm_delete_ev
         await interaction.reply({ content: 'لا توجد مخالفات لهذا الشخص.', ephemeral: true });
         return;
       }
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(identity.violations.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -5299,7 +5278,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
     await interaction.reply({ content: 'لا توجد مخالفات لهذا الشخص.', ephemeral: true });
     return;
   }
-  const pageSize = 10;
+  const pageSize = 23;
   const totalPages = Math.ceil(identity.violations.length / pageSize);
   const start = (page - 1) * pageSize;
   const end = start + pageSize;
@@ -5333,7 +5312,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         await interaction.reply({ content: 'لا توجد مخالفات لهذا الشخص.', ephemeral: true });
         return;
       }
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(identity.violations.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -5593,7 +5572,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         await interaction.reply({ content: 'لا توجد جرائم لهذا الشخص.', ephemeral: true });
         return;
       }
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(identity.crimes.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -5628,7 +5607,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         await interaction.reply({ content: 'لا توجد جرائم لهذا الشخص.', ephemeral: true });
         return;
       }
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(identity.crimes.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -5697,7 +5676,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         await interaction.reply({ content: 'لا توجد جرائم لهذا الشخص.', ephemeral: true });
         return;
       }
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(identity.crimes.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -5732,7 +5711,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         await interaction.reply({ content: 'لا توجد جرائم لهذا الشخص.', ephemeral: true });
         return;
       }
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(identity.crimes.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -6033,7 +6012,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       // جلب جميع السيرفرات التي يوجد فيها البوت
       const guilds = client.guilds.cache.map(g => g);
       const page = 1;
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(guilds.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -6136,7 +6115,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('toggle_bot_guilds_menu_') && interaction.values[0].startsWith('toggle_bot_guilds_more_')) {
       const page = parseInt(interaction.values[0].replace('toggle_bot_guilds_more_', ''));
       const guilds = client.guilds.cache.map(g => g);
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(guilds.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -6181,7 +6160,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       // جلب جميع السيرفرات التي يوجد فيها البوت
       const guilds = client.guilds.cache.map(g => g);
       const page = 1;
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(guilds.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -6215,7 +6194,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         return;
       }
       const page = 1;
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(identity.crimes.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -6250,7 +6229,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         await interaction.reply({ content: 'لا توجد جرائم لهذا الشخص.', ephemeral: true });
         return;
       }
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(identity.crimes.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -6350,7 +6329,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         return;
       }
       const page = 1;
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(crimesWithEvidence.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -6390,7 +6369,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         await interaction.reply({ content: 'لا توجد جرائم تحتوي على أدلة.', ephemeral: true });
         return;
       }
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(crimesWithEvidence.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -6475,7 +6454,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('dev_guilds_menu_') && interaction.values[0].startsWith('dev_guilds_more_')) {
       const nextPage = parseInt(interaction.values[0].split('_').pop());
       const guilds = client.guilds.cache.map(g => g);
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(guilds.length / pageSize);
       const start = (nextPage - 1) * pageSize;
       const end = start + pageSize;
@@ -6630,7 +6609,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       // جلب جميع السيرفرات التي يوجد فيها البوت
       const guilds = client.guilds.cache.map(g => g);
       const page = 1;
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(guilds.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -6880,7 +6859,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       if (selectedValue.startsWith('premium_page_')) {
         const page = parseInt(selectedValue.replace('premium_page_', ''));
         const guilds = client.guilds.cache.map(g => g);
-        const pageSize = 10;
+        const pageSize = 23;
         const totalPages = Math.ceil(guilds.length / pageSize);
         const start = (page - 1) * pageSize;
         const end = start + pageSize;
@@ -7059,7 +7038,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       // العودة لقائمة السيرفرات
       const guilds = client.guilds.cache.map(g => g);
       const page = 1;
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(guilds.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -7486,7 +7465,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       // جلب جميع السيرفرات التي يوجد فيها البوت
       const guilds = client.guilds.cache.map(g => g);
       const page = 1;
-      const pageSize = 10;
+      const pageSize = 23;
       const totalPages = Math.ceil(guilds.length / pageSize);
       const start = (page - 1) * pageSize;
       const end = start + pageSize;
@@ -7887,8 +7866,8 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
           saveAllData();
         }
         
-        // تحديث الصورة في روم مباشرة العسكر (فقط إذا كان المستخدم موجود في الصور)
-        await updateMilitaryPageImage(guildId, userId);
+        // تحديث الصورة في روم مباشرة العسكر
+        await updateMilitaryPageImage(guildId);
         
         const embed = new EmbedBuilder()
           .setTitle('✅ تم تعديل الكود العسكري بنجاح')
@@ -7962,8 +7941,8 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
           saveAllData();
         }
         
-        // تحديث الصورة في روم مباشرة العسكر (فقط إذا كان المستخدم موجود في الصور)
-        await updateMilitaryPageImage(guildId, userId);
+        // تحديث الصورة في روم مباشرة العسكر
+        await updateMilitaryPageImage(guildId);
         
         const embed = new EmbedBuilder()
           .setTitle('✅ تم إضافة الكود العسكري بنجاح')
@@ -8110,8 +8089,8 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
           saveAllData();
         }
         
-        // تحديث الصورة في روم مباشرة العسكر (فقط إذا كان المستخدم موجود في الصور)
-        await updateMilitaryPageImage(guildId, userId);
+        // تحديث الصورة في روم مباشرة العسكر
+        await updateMilitaryPageImage(guildId);
         
         const embed = new EmbedBuilder()
           .setTitle('🎖️ تم إضافة الرتبة العسكرية بنجاح')
