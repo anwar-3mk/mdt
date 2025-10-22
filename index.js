@@ -3523,18 +3523,21 @@ client.on('interactionCreate', async interaction => {
       try {
         const targetUser = await client.users.fetch(targetUserId);
         const deviceImagePath = resolveDeviceImagePath();
+        const files = fs.existsSync(deviceImagePath) ? [new AttachmentBuilder(fs.readFileSync(deviceImagePath), { name: 'device.png' })] : [];
         const embed = new EmbedBuilder()
           .setTitle('🖐️ جهاز البصمة المعتمد')
           .setDescription(`تم إرسال إليك جهاز البصمة من قبل جهة رسمية في السيرفر.
 اضغط على الزر أدناه للموافقة على مشاركة هويتك (إن وجدت) خلال 10 دقائق.`)
           .setColor('#1e3a8a')
           .setTimestamp();
+        if (files.length > 0) {
+          embed.setImage('attachment://device.png');
+        }
         const approveBtn = new ButtonBuilder()
           .setCustomId(`fingerprint_approve_${sessionId}`)
           .setLabel('تبصيم')
           .setStyle(ButtonStyle.Primary);
         const row = new ActionRowBuilder().addComponents(approveBtn);
-        const files = fs.existsSync(deviceImagePath) ? [{ attachment: deviceImagePath, name: 'device.png' }] : [];
         const dm = await targetUser.send({ embeds: [embed], components: [row], files });
         // حفظ معرف رسالة الخاص لمرجعية مستقبلية
         session.dmMessageId = dm.id;
@@ -3576,10 +3579,14 @@ client.on('interactionCreate', async interaction => {
       const guild = client.guilds.cache.get(session.guildId);
       const identity = identities.find(id => id.userId === session.targetUserId && id.guildId === session.guildId);
 
+      const files = fs.existsSync(deviceImagePath) ? [new AttachmentBuilder(fs.readFileSync(deviceImagePath), { name: 'device.png' })] : [];
       const resultEmbed = new EmbedBuilder()
         .setTitle('🖐️ نتيجة جهاز البصمة')
         .setColor(identity ? '#00b894' : '#e74c3c')
         .setTimestamp();
+      if (files.length > 0) {
+        resultEmbed.setImage('attachment://device.png');
+      }
       if (identity) {
         resultEmbed.setDescription(`تم التبصيم بنجاح.
 **الاسم:** ${identity.fullName}
@@ -3592,7 +3599,6 @@ client.on('interactionCreate', async interaction => {
 
       try {
         if (officer) {
-          const files = fs.existsSync(deviceImagePath) ? [{ attachment: deviceImagePath, name: 'device.png' }] : [];
           await officer.send({ embeds: [resultEmbed], files });
         }
       } catch (_) {}
