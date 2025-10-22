@@ -78,6 +78,25 @@ async function logDeveloperAction(developerId, action, details = '') {
   }
 }
 
+// دالة تعيين حالة البوت على Twitch
+async function setTwitchStatus() {
+  try {
+    await client.user.setPresence({
+      activities: [{
+        name: 'BestLaw',
+        type: 1, // STREAMING
+        url: 'https://twitch.tv/random'
+      }],
+      status: 'online'
+    });
+    console.log('✅ تم تعيين حالة البوت على Twitch: BestLaw');
+    return true;
+  } catch (error) {
+    console.error('❌ خطأ في تعيين حالة البوت على Twitch:', error);
+    return false;
+  }
+}
+
 // --- إعدادات السيرفرات ---
 let guildSettings = {};
 
@@ -915,6 +934,9 @@ client.once('ready', async () => {
   } catch (error) {
     console.error('❌ فشل تسجيل الأمر:', error);
   }
+  
+  // إعداد حالة البوت على Twitch
+  await setTwitchStatus();
 });
 
 client.on('messageCreate', message => {
