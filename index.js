@@ -15,9 +15,8 @@ const { loadState, saveState } = require('./db/state');
 // مسار صورة جهاز البصمة المعتمد (مع تفضيل الاسم الجديد ثم fallback)
 function resolveDeviceImagePath() {
   const candidates = [
-    path.join(__dirname, '@2.png'),
-    path.join(__dirname, '@جهاز البصمة المعتمد (2).png'),
-    path.join(__dirname, '2.png')
+    path.join(__dirname, '@4.png'),
+    path.join(__dirname, '4.png')
   ];
   for (const p of candidates) {
     try { if (fs.existsSync(p)) return p; } catch (_) {}
