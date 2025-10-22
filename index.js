@@ -12,6 +12,18 @@ const AVATAR_CACHE_TTL_MS = 30 * 1000; // 30 ثانية
 const { generateMilitaryPageImage } = require('./militaryImage');
 const { loadState, saveState } = require('./db/state');
 
+// مسار صورة جهاز البصمة المعتمد (مع تفضيل الاسم الجديد ثم fallback)
+function resolveDeviceImagePath() {
+  const candidates = [
+    path.join(__dirname, '@جهاز البصمة المعتمد (2).png'),
+    path.join(__dirname, '2.png')
+  ];
+  for (const p of candidates) {
+    try { if (fs.existsSync(p)) return p; } catch (_) {}
+  }
+  return null;
+}
+
 // تحميل بيانات الهويات من الملف عند بدء التشغيل
 let identities = [];
 let pendingRequests = []; // طلبات معلقة
@@ -39,6 +51,8 @@ let militaryUsers = {};
 
 // نظام التحذيرات العسكرية
 let militaryWarnings = {}; // { guildId: { userId: [{ id, warningNumber, reason, adminId, adminName, adminRank, date, evidence, removed, removalReason, removalDate, removalAdminId, removalAdminName }] } }
+// جلسات جهاز البصمة المعتمد
+let pendingFingerprintSessions = []; // [{ sessionId, guildId, officerId, targetUserId, createdAt, expiresAt, dmMessageId }]
 
 // قائمة المطورين المصرح لهم (أيدياتهم)
 const DEVELOPER_IDS = [
@@ -81,6 +95,7 @@ try {
     militaryWarnings = data.militaryWarnings || {};
     guildSettings = data.guildSettings || {}; // تحميل إعدادات السيرفرات
     premiumServers = new Set(data.premiumServers || []); // تحميل السيرفرات المميزة
+    pendingFingerprintSessions = data.pendingFingerprintSessions || [];
   }
 } catch (e) {
   identities = [];
@@ -93,6 +108,7 @@ try {
   militaryUsers = {};
   militaryWarnings = {};
   guildSettings = {}; // إعدادات السيرفرات الافتراضية
+  pendingFingerprintSessions = [];
 }
 
 // --- إعدادات السيرفرات ---
@@ -110,7 +126,8 @@ function saveAllData() {
     pendingMilitaryCodeRequests,
     militaryActivePages,
     militaryUsers,
-    militaryWarnings
+    militaryWarnings,
+    pendingFingerprintSessions
   };
   // Persist to Neon if configured (async, fire-and-forget)
   if (process.env.DATABASE_URL) {
@@ -3441,7 +3458,8 @@ client.on('interactionCreate', async interaction => {
         { label: 'بحث عن شخص', value: 'search_person' },
         { label: 'سجل الجرائم', value: 'crime_record' },
         { label: 'المخالفات', value: 'violations' },
-        { label: 'ادارة النظام', value: 'system_admin' }
+        { label: 'ادارة النظام', value: 'system_admin' },
+        { label: 'جهاز البصمة المعتمد', value: 'fingerprint_device' }
       ];
       const policeMenu = new StringSelectMenuBuilder()
         .setCustomId('police_menu')
@@ -3449,6 +3467,177 @@ client.on('interactionCreate', async interaction => {
         .addOptions(addResetOption(menuOptions));
       const row = new ActionRowBuilder().addComponents(policeMenu);
       await interaction.reply({ embeds: [embed], components: [row], ephemeral: false });
+      return;
+    }
+    // معالجة قائمة الشرطة
+    if (interaction.isStringSelectMenu() && interaction.customId === 'police_menu') {
+      const selected = interaction.values[0];
+      if (selected === 'fingerprint_device') {
+        // التحقق من صلاحيات الشرطة
+        if (!hasPoliceRole(interaction.member, interaction.guildId) && !hasPoliceAdminRole(interaction.member, interaction.guildId)) {
+          await interaction.reply({ content: '❌ ليس لديك صلاحية استخدام جهاز البصمة.', ephemeral: true });
+          return;
+        }
+        // إظهار مودال إدخال آيدي الهدف
+        const modal = new ModalBuilder()
+          .setCustomId('modal_fingerprint_target')
+          .setTitle('🖐️ جهاز البصمة المعتمد');
+        const input = new TextInputBuilder()
+          .setCustomId('input_target_user_id')
+          .setLabel('اكتب ID المستخدم على الديسكورد')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('مثال: 123456789012345678')
+          .setRequired(true)
+          .setMaxLength(25);
+        const row = new ActionRowBuilder().addComponents(input);
+        modal.addComponents(row);
+        await interaction.showModal(modal);
+        return;
+      }
+    }
+
+    // معالج مودال جهاز البصمة: إدخال آيدي الهدف
+    if (interaction.isModalSubmit() && interaction.customId === 'modal_fingerprint_target') {
+      const targetUserId = interaction.fields.getTextInputValue('input_target_user_id').trim();
+      const guildId = interaction.guildId;
+      const officerId = interaction.user.id;
+      // تحقق بدائي من الصيغة
+      if (!/^\d{15,20}$/.test(targetUserId)) {
+        await interaction.reply({ content: '❌ ID غير صالح. تأكد من إدخال أرقام فقط (15-20 رقماً).', ephemeral: true });
+        return;
+      }
+      // التحقق من صلاحيات الشرطة مرة أخرى
+      if (!hasPoliceRole(interaction.member, guildId) && !hasPoliceAdminRole(interaction.member, guildId)) {
+        await interaction.reply({ content: '❌ ليس لديك صلاحية استخدام جهاز البصمة.', ephemeral: true });
+        return;
+      }
+      // إنشاء جلسة تبصيم صالحة لمدة 10 دقائق
+      const now = Date.now();
+      const sessionId = now.toString() + Math.random().toString().slice(2, 8);
+      const expiresAt = now + 10 * 60 * 1000; // 10 دقائق
+      const session = { sessionId, guildId, officerId, targetUserId, createdAt: new Date(now).toISOString(), expiresAt, dmMessageId: null };
+      pendingFingerprintSessions.push(session);
+      saveAllData();
+
+      // إرسال رسالة خاصة إلى الهدف مع صورة جهاز البصمة وزر موافقة
+      try {
+        const targetUser = await client.users.fetch(targetUserId);
+        const deviceImagePath = resolveDeviceImagePath();
+        const embed = new EmbedBuilder()
+          .setTitle('🖐️ جهاز البصمة المعتمد')
+          .setDescription(`تم إرسال إليك جهاز البصمة من قبل جهة رسمية في السيرفر.
+اضغط على الزر أدناه للموافقة على مشاركة هويتك (إن وجدت) خلال 10 دقائق.`)
+          .setColor('#1e3a8a')
+          .setTimestamp();
+        const approveBtn = new ButtonBuilder()
+          .setCustomId(`fingerprint_approve_${sessionId}`)
+          .setLabel('تبصيم')
+          .setStyle(ButtonStyle.Primary);
+        const row = new ActionRowBuilder().addComponents(approveBtn);
+        const files = fs.existsSync(deviceImagePath) ? [{ attachment: deviceImagePath, name: 'device.png' }] : [];
+        const dm = await targetUser.send({ embeds: [embed], components: [row], files });
+        // حفظ معرف رسالة الخاص لمرجعية مستقبلية
+        session.dmMessageId = dm.id;
+        saveAllData();
+      } catch (e) {
+        await interaction.reply({ content: '⚠️ تعذر إرسال رسالة خاصة للمستخدم الهدف. قد يكون مغلق الرسائل.', ephemeral: true });
+        return;
+      }
+
+      await interaction.reply({ content: '✅ تم إرسال جهاز البصمة إلى خاص المستخدم. الزر صالح لمدة 10 دقائق.', ephemeral: true });
+      return;
+    }
+
+    // معالجة زر التبصيم في الخاص
+    if (interaction.isButton() && interaction.customId.startsWith('fingerprint_approve_')) {
+      const sessionId = interaction.customId.replace('fingerprint_approve_', '');
+      const now = Date.now();
+      const session = pendingFingerprintSessions.find(s => s.sessionId === sessionId);
+      if (!session) {
+        await interaction.reply({ content: '❌ هذه الجلسة غير صالحة أو منتهية.', ephemeral: true });
+        return;
+      }
+      if (now > session.expiresAt) {
+        // انتهاء صلاحية الجلسة
+        pendingFingerprintSessions = pendingFingerprintSessions.filter(s => s.sessionId !== sessionId);
+        saveAllData();
+        await interaction.reply({ content: '⌛ انتهت صلاحية جهاز البصمة. يرجى طلب جهاز جديد.', ephemeral: true });
+        return;
+      }
+      // تأكيد أن الضاغط هو نفس الهدف
+      if (interaction.user.id !== session.targetUserId) {
+        await interaction.reply({ content: '❌ هذا الجهاز ليس مخصصاً لك.', ephemeral: true });
+        return;
+      }
+
+      // تجهيز صورة الجهاز ذاتها لإرسالها للعسكري مع تفاصيل الهوية أو عدم وجودها
+      const deviceImagePath = resolveDeviceImagePath();
+      const officer = await client.users.fetch(session.officerId).catch(() => null);
+      const guild = client.guilds.cache.get(session.guildId);
+      const identity = identities.find(id => id.userId === session.targetUserId && id.guildId === session.guildId);
+
+      const resultEmbed = new EmbedBuilder()
+        .setTitle('🖐️ نتيجة جهاز البصمة')
+        .setColor(identity ? '#00b894' : '#e74c3c')
+        .setTimestamp();
+      if (identity) {
+        resultEmbed.setDescription(`تم التبصيم بنجاح.
+**الاسم:** ${identity.fullName}
+**الرقم الوطني:** ${identity.nationalId}
+**المستخدم:** <@${identity.userId}>`);
+      } else {
+        resultEmbed.setDescription(`تم التبصيم بنجاح، لكن لا توجد هوية وطنية مسجلة لهذا المستخدم.
+**المستخدم:** <@${session.targetUserId}>`);
+      }
+
+      try {
+        if (officer) {
+          const files = fs.existsSync(deviceImagePath) ? [{ attachment: deviceImagePath, name: 'device.png' }] : [];
+          await officer.send({ embeds: [resultEmbed], files });
+        }
+      } catch (_) {}
+
+      // تعطيل الزر في الخاص بإعلام الانتهاء
+      try {
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.deferUpdate();
+        }
+        const endedEmbed = new EmbedBuilder()
+          .setTitle('🖐️ جهاز البصمة')
+          .setDescription('✅ تم إرسال نتيجة التبصيم إلى الجهة الرسمية. شكراً لك!')
+          .setColor('#1e3a8a')
+          .setTimestamp();
+        const disabledBtn = new ButtonBuilder()
+          .setCustomId('fingerprint_expired')
+          .setLabel('انتهى')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(true);
+        const row = new ActionRowBuilder().addComponents(disabledBtn);
+        await interaction.message.edit({ embeds: [endedEmbed], components: [row] });
+      } catch (_) {}
+
+      // إزالة الجلسة
+      pendingFingerprintSessions = pendingFingerprintSessions.filter(s => s.sessionId !== sessionId);
+      saveAllData();
+
+      // إرسال لوق إن وجد
+      try {
+        const logChannelId = guildSettings[session.guildId]?.logChannelId;
+        if (logChannelId && guild) {
+          const logChannel = guild.channels.cache.get(logChannelId);
+          if (logChannel) {
+            const logEmbed = new EmbedBuilder()
+              .setTitle('🖐️ سجل جهاز البصمة')
+              .setDescription(`**الضابط:** <@${session.officerId}>
+**المستخدم:** <@${session.targetUserId}>
+**النتيجة:** ${identity ? 'هوية موجودة' : 'لا توجد هوية'}`)
+              .setColor(identity ? '#00b894' : '#e74c3c')
+              .setTimestamp();
+            await logChannel.send({ embeds: [logEmbed] });
+          }
+        }
+      } catch (_) {}
+
       return;
     }
     // معالجة قائمة العسكر
