@@ -97,6 +97,40 @@ async function setTwitchStatus() {
   }
 }
 
+// تدوير حالة البوت على Twitch كل 5 ثوانٍ
+let twitchPresenceInterval = null;
+function startRotatingTwitchStatus() {
+  const messages = [
+    ' - MDT Prime ',
+    ' - Dev BoT # - Anwar - alagrb '
+  ];
+  let i = 0;
+
+  const applyPresence = async () => {
+    try {
+      await client.user.setPresence({
+        activities: [{
+          name: messages[i % messages.length],
+          type: 1,
+          url: 'https://twitch.tv/random'
+        }],
+        status: 'online'
+      });
+    } catch (error) {
+      console.error('❌ خطأ في تدوير حالة Twitch:', error);
+    }
+    i++;
+  };
+
+  if (twitchPresenceInterval) {
+    clearInterval(twitchPresenceInterval);
+    twitchPresenceInterval = null;
+  }
+
+  applyPresence();
+  twitchPresenceInterval = setInterval(applyPresence, 5000);
+}
+
 // --- إعدادات السيرفرات ---
 let guildSettings = {};
 
@@ -936,7 +970,7 @@ client.once('ready', async () => {
   }
   
   // إعداد حالة البوت على Twitch
-  await setTwitchStatus();
+  startRotatingTwitchStatus();
 });
 
 client.on('messageCreate', message => {
