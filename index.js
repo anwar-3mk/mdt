@@ -131,6 +131,43 @@ function startRotatingTwitchStatus() {
   twitchPresenceInterval = setInterval(applyPresence, 5000);
 }
 
+// نظام Keep-Alive للحفاظ على الاتصال
+let keepAliveInterval;
+function startKeepAlive() {
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+  }
+  
+  // ping تلقائي كل دقيقة للحفاظ على الاتصال
+  keepAliveInterval = setInterval(async () => {
+    try {
+      if (client.readyAt) {
+        // إرسال ping للتحقق من الاتصال
+        const ping = await client.ws.ping;
+        console.log(`💓 Keep-alive ping: ${ping}ms`);
+        
+        // تحديث حالة البوت
+        if (getBotStatus() === 'offline') {
+          setBotStatus('online');
+          console.log('🟢 Bot status updated to online');
+        }
+      } else {
+        console.log('⚠️ Bot not ready, attempting reconnection...');
+        // محاولة إعادة الاتصال
+        try {
+          await client.login(config.DISCORD_TOKEN);
+        } catch (error) {
+          console.error('❌ Reconnection failed:', error);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Keep-alive error:', error);
+    }
+  }, 60000); // كل دقيقة
+  
+  console.log('💓 Keep-alive system started');
+}
+
 // --- إعدادات السيرفرات ---
 let guildSettings = {};
 
@@ -811,12 +848,57 @@ function startHttpServerOnce() {
   if (httpServerStarted) return;
   const port = process.env.PORT || 3000;
   const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('MDT Bot is running!');
+    // إضافة CORS headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    
+    // معالجة OPTIONS requests
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+    
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const pathname = url.pathname;
+    
+    if (pathname === '/health' || pathname === '/ping') {
+      // Health check endpoint
+      const botStatus = client.readyAt ? 'online' : 'offline';
+      const uptime = process.uptime();
+      const memoryUsage = process.memoryUsage();
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'ok',
+        bot: botStatus,
+        uptime: Math.floor(uptime),
+        memory: {
+          rss: Math.round(memoryUsage.rss / 1024 / 1024) + ' MB',
+          heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024) + ' MB',
+          heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024) + ' MB'
+        },
+        timestamp: new Date().toISOString(),
+        guilds: client.guilds?.cache?.size || 0
+      }));
+    } else if (pathname === '/keepalive') {
+      // Keep-alive endpoint
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('MDT Bot is alive and running!');
+    } else {
+      // Default endpoint
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('MDT Bot is running!');
+    }
   });
+  
   server.listen(port, () => {
     console.log(`🌐 Main server running on port ${port}`);
+    console.log(`💚 Health check available at: http://localhost:${port}/health`);
+    console.log(`💓 Keep-alive endpoint: http://localhost:${port}/keepalive`);
   });
+  
   httpServerStarted = true;
 }
 // ابدأ الخادم مبكراً
@@ -825,10 +907,55 @@ startHttpServerOnce();
 // إضافة معالجة الأخطاء
 process.on('uncaughtException', (error) => {
   console.error('❌ Uncaught Exception:', error);
+  // لا نخرج من العملية، بل نحاول الاستمرار
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  // لا نخرج من العملية، بل نحاول الاستمرار
+});
+
+// معالجة انقطاع الاتصال وإعادة الاتصال التلقائي
+client.on('disconnect', () => {
+  console.log('🔌 Discord Client Disconnected - Attempting reconnection...');
+  setBotStatus('offline');
+});
+
+client.on('reconnecting', () => {
+  console.log('🔄 Discord Client Reconnecting...');
+});
+
+client.on('resume', () => {
+  console.log('✅ Discord Client Reconnected');
+  setBotStatus('online');
+});
+
+// معالجة أخطاء WebSocket
+client.on('shardError', (error) => {
+  console.error('❌ Shard Error:', error);
+});
+
+// إضافة معالجة لانقطاع الشبكة
+process.on('SIGTERM', () => {
+  console.log('🛑 SIGTERM received, shutting down gracefully...');
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+  }
+  if (twitchPresenceInterval) {
+    clearInterval(twitchPresenceInterval);
+  }
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('🛑 SIGINT received, shutting down gracefully...');
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+  }
+  if (twitchPresenceInterval) {
+    clearInterval(twitchPresenceInterval);
+  }
+  process.exit(0);
 });
 
 const client = new Client({
@@ -940,6 +1067,9 @@ client.once('ready', async () => {
   
   // تأكد من تشغيل خادم HTTP مرة واحدة فقط
   startHttpServerOnce();
+  
+  // بدء نظام Keep-Alive
+  startKeepAlive();
   
   // حفظ اسم البوت الأصلي إذا لم يكن محفوظاً
   if (!originalBotName) {
@@ -6250,6 +6380,48 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
       return;
     }
+    
+    // عند اختيار حالة البوت من قائمة المطور
+    if (interaction.isStringSelectMenu() && interaction.customId === 'dev_menu' && interaction.values[0] === 'bot_status') {
+      // تحقق من أن المستخدم مطور مصرح له
+      if (!isDeveloper(interaction.user.id)) {
+        await interaction.reply({ 
+          content: '❌ هذا الأمر مخصص فقط للمطورين المصرح لهم.', 
+          ephemeral: true 
+        });
+        return;
+      }
+      
+      const uptime = process.uptime();
+      const memoryUsage = process.memoryUsage();
+      const botStatus = getBotStatus();
+      const isReady = client.readyAt ? true : false;
+      const ping = client.ws.ping;
+      const guildCount = client.guilds.cache.size;
+      const userCount = client.users.cache.size;
+      
+      const statusEmbed = new EmbedBuilder()
+        .setTitle('📊 حالة البوت الحالية')
+        .setDescription('معلومات مفصلة عن حالة البوت والاتصال')
+        .addFields(
+          { name: '🟢 حالة البوت', value: botStatus === 'online' ? '🟢 متصل' : '🔴 متوقف', inline: true },
+          { name: '🔗 حالة الاتصال', value: isReady ? '🟢 متصل بـ Discord' : '🔴 غير متصل', inline: true },
+          { name: '📡 Ping', value: `${ping}ms`, inline: true },
+          { name: '⏱️ وقت التشغيل', value: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m ${Math.floor(uptime % 60)}s`, inline: true },
+          { name: '🏠 السيرفرات', value: `${guildCount}`, inline: true },
+          { name: '👥 المستخدمين', value: `${userCount}`, inline: true },
+          { name: '💾 الذاكرة المستخدمة', value: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)} MB`, inline: true },
+          { name: '💾 إجمالي الذاكرة', value: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)} MB`, inline: true },
+          { name: '💾 ذاكرة النظام', value: `${Math.round(memoryUsage.rss / 1024 / 1024)} MB`, inline: true }
+        )
+        .setColor(botStatus === 'online' && isReady ? '#00ff00' : '#ff0000')
+        .setTimestamp()
+        .setFooter({ text: 'MDT Bot Status Monitor' });
+      
+      await interaction.reply({ embeds: [statusEmbed], ephemeral: true });
+      return;
+    }
+    
     // عند اختيار إيقاف | تشغيل البوت من قائمة المطور
     if (interaction.isStringSelectMenu() && interaction.customId === 'dev_menu' && interaction.values[0] === 'toggle_bot_status') {
       // تحقق من أن المستخدم مطور مصرح له
@@ -7342,6 +7514,7 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
       const menuOptions = [
         { label: 'تغيير ايمبيد', value: 'change_embed', description: 'تغيير صورة الإمبد لجميع الأوامر في السيرفرات' },
         { label: 'إيقاف | تشغيل البوت', value: 'toggle_bot_status', description: 'إدارة حالة البوت في جميع السيرفرات' },
+        { label: 'حالة البوت', value: 'bot_status', description: 'عرض حالة البوت والاتصال والذاكرة' },
         { label: 'البريميوم', value: 'premium_management', description: 'إدارة السيرفرات المميزة' },
         { label: 'إدارة قاعدة البوت', value: 'database_management', description: 'تنظيف وضغط قاعدة البيانات وإدارة البيانات' }
       ];
