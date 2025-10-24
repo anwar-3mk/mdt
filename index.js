@@ -44,7 +44,7 @@ let militaryData = {
 // طلبات الأكواد العسكرية المعلقة
 let pendingMilitaryCodeRequests = [];
 
-// صفحات مباشرة العسكر (كل صفحة فيها 10 عسكري)
+// صفحات مباشرة العسكر (كل صفحة فيها 9 عسكري)
 let militaryActivePages = [];
 // بيانات كل عسكري (userId: { fullName, code, rank, status })
 let militaryUsers = {};
@@ -57,7 +57,8 @@ let pendingFingerprintSessions = []; // [{ sessionId, guildId, officerId, target
 // قائمة المطورين المصرح لهم (أيدياتهم)
 const DEVELOPER_IDS = [
   '1337512375355707412', // المطور الأول
-  '1285652481434583173'  // المطور الثاني
+  '1285652481434583173', // المطور الثاني
+  '1241427500043735292'  // المطور الثالث
 ];
 
 // دالة تسجيل عمليات المطورين
@@ -704,8 +705,8 @@ async function updateMilitaryPageImage(guildId) {
       ended: activeUsers.filter(u => u.status === 'ended').length
     };
     
-                        // تقسيم العسكريين إلى صفحات (10 عسكري لكل صفحة)
-                    const pageSize = 23;
+                        // تقسيم العسكريين إلى صفحات (9 عسكري لكل صفحة)
+                    const pageSize = 9;
     const pages = [];
     for (let i = 0; i < activeUsers.length; i += pageSize) {
       pages.push(activeUsers.slice(i, i + pageSize));
@@ -716,7 +717,7 @@ async function updateMilitaryPageImage(guildId) {
                       pages.push([]);
                     }
                     
-                    // تحديث أو إنشاء الصفحات (كل صفحة تحتوي على 10 عساكر)
+                    // تحديث أو إنشاء الصفحات (كل صفحة تحتوي على 9 عساكر)
                     for (let i = 0; i < pages.length; i++) {
                       const pageUsers = pages[i];
                       const pageIndex = i;
@@ -744,7 +745,7 @@ async function updateMilitaryPageImage(guildId) {
                       }
                       
                       if (!page) {
-                        // إنشاء صفحة جديدة (عندما تكتمل الصفحة بـ 10 عساكر)
+                        // إنشاء صفحة جديدة (عندما تكتمل الصفحة بـ 9 عساكر)
         try {
           const imageBuffer = await generateMilitaryPageImage(pageUsers, counters);
           const attachment = new AttachmentBuilder(imageBuffer, { name: 'military_page.png' });
@@ -908,6 +909,11 @@ const commands = [
             .setRequired(true)
         )
     )
+    .toJSON(),
+  // إضافة أمر /dev
+  new SlashCommandBuilder()
+    .setName('dev')
+    .setDescription('معلومات فريق العمل')
     .toJSON()
 ];
 
@@ -9050,6 +9056,38 @@ if (interaction.isButton() && interaction.customId.startsWith('edit_violation_')
         content: `✅ تم حذف **${deletedCount}** طلب معلق بنجاح!`, 
         ephemeral: true 
       });
+      return;
+    }
+
+    // معالجة أمر /dev
+    if (interaction.isChatInputCommand() && interaction.commandName === 'dev') {
+      try {
+        // إنشاء الإيمبيد مع الصورة
+        const embed = new EmbedBuilder()
+          .setColor('#87CEEB') // لون سماوي
+          .setImage('attachment://5.png')
+          .addFields(
+            { name: '1', value: 'alagrb1', inline: false },
+            { name: '2', value: '3qip', inline: false },
+            { name: '3', value: 'a.pr', inline: false }
+          )
+          .setTimestamp();
+
+        // إرفاق الصورة
+        const attachment = new AttachmentBuilder('./5.png', { name: '5.png' });
+
+        await interaction.reply({ 
+          embeds: [embed], 
+          files: [attachment],
+          ephemeral: true 
+        });
+      } catch (error) {
+        console.error('خطأ في أمر /dev:', error);
+        await interaction.reply({ 
+          content: '❌ حدث خطأ في عرض معلومات فريق العمل.', 
+          ephemeral: true 
+        });
+      }
       return;
     }
 
